@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -1108,7 +1107,7 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
     return Column(mainAxisSize: MainAxisSize.min, children: [
       GestureDetector(
         onPanDown: (d) => _moveAimJoystick(d.localPosition),
-        onPanUpdate: (d) => _moveAimJoystick(d.localPosition, const Size(88, 88)),
+        onPanUpdate: (d) => _moveAimJoystick(d.localPosition),
         onPanEnd: (_) => _releaseAimJoystick(),
         onPanCancel: _releaseAimJoystick,
         child: SizedBox(
