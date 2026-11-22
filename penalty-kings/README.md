@@ -23,7 +23,7 @@ A polished, offline-first football penalty shootout game built with Flutter.
 
 ## Build an Android APK
 1. Create a GitHub repository and upload the contents of this project folder.
-2. Make sure the workflow is at `.github/workflows/android-apk.yml`.
+2. The repository-root workflow is at `.github/workflows/android-apk.yml` and builds the app from this `penalty-kings/` folder.
 3. Push to `main` (or `master`).
 4. Open **Actions → Android APK** and wait for the workflow to finish.
 5. Open the completed run and download the `penalty-kings-android-apk` artifact. Extract the APK from the downloaded artifact ZIP.
