@@ -1,7 +1,7 @@
 name: penalty_kings
 description: Premium football penalty shootout game built with Flutter.
 publish_to: "none"
-version: 3.4.0+7
+version: 4.0.0+8
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
