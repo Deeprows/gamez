@@ -1,4 +1,4 @@
-# Penalty Kings — Version 3.0.0
+# Penalty Kings — Version 3.1.0
 
 A polished, offline-first football penalty shootout game built with Flutter.
 
@@ -8,9 +8,13 @@ A polished, offline-first football penalty shootout game built with Flutter.
 - **Training Ground:** ten attempts to sharpen your finishing.
 - Three goalkeeper difficulty levels: Amateur, Pro and World Class.
 - Drag on the pitch to aim, set shot power, then shoot.
-- Animated shot outcomes, goalkeeper reactions and haptic feedback.
+- Animated shot outcomes, horizontal and vertical goalkeeper dives, and haptic feedback.
+- Shot power now affects shot speed versus control and the goalkeeper's chance of saving.
+- Match-by-match scoring history distinguishes goals, saves and misses.
+- Match-end conversion rate and best streak are calculated for the match, not the lifetime career.
+- Goalkeeper difficulty is saved between sessions.
 
-## Career system (new in v3)
+## Career system
 - Persistent career record: matches, shots, goals and goalkeeper saves.
 - Goal conversion percentage.
 - Six unlockable achievements with live progress.
@@ -34,5 +38,5 @@ flutter build apk --release
 ## Notes
 - The game works offline after installation.
 - Career statistics are local to the device; there is no online leaderboard or cloud account in this version.
-- The sound-effects preference is retained for future audio support; actual sound effects are not included yet.
+- The sound-effects preference is retained for a future audio pack; actual sound effects are not included yet.
 - The project uses GitHub Actions to generate the Android platform folder when it is not present.
