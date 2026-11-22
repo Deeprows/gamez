@@ -154,6 +154,7 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
   bool _newRecord = false;
   double _power = .72;
   Offset _aim = const Offset(.0, -.68);
+  Offset _joystick = Offset.zero;
   bool _shotTaken = false;
   bool _goal = false;
   bool _saved = false;
@@ -384,7 +385,7 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _TutorialLine(icon: Icons.touch_app_rounded, text: 'Drag on the pitch to aim at a corner.'),
+            _TutorialLine(icon: Icons.gamepad_rounded, text: 'Use the left virtual joystick to aim at a corner.'),
             SizedBox(height: 12),
             _TutorialLine(icon: Icons.bolt_rounded, text: 'Set your shot power with the power bar.'),
             SizedBox(height: 12),
@@ -413,6 +414,28 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
     final x = ((local.dx / size.width) * 2 - 1).clamp(-.92, .92);
     final y = ((local.dy / size.height) * 2 - 1).clamp(-.92, .28);
     setState(() => _aim = Offset(x.toDouble(), y.toDouble()));
+  }
+
+  void _moveAimJoystick(Offset local, Size size) {
+    if (_shotTaken || _isResolving) return;
+    const center = 44.0;
+    const radius = 31.0;
+    var delta = local - const Offset(center, center);
+    if (delta.distance > radius) {
+      delta = Offset.fromDirection(delta.direction, radius);
+    }
+    setState(() {
+      _joystick = delta / radius;
+      _aim = Offset(
+        _joystick.dx.clamp(-.92, .92).toDouble(),
+        (-.68 + _joystick.dy * .65).clamp(-.92, .28).toDouble(),
+      );
+    });
+  }
+
+  void _releaseAimJoystick() {
+    if (!mounted) return;
+    setState(() => _joystick = Offset.zero);
   }
 
   void _shoot() {
@@ -1081,15 +1104,63 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
     Text(label, style: TextStyle(color: Colors.white.withOpacity(.65), fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: .8)),
   ]);
 
+  Widget _virtualAimPad() {
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      GestureDetector(
+        onPanDown: (d) => _moveAimJoystick(d.localPosition, const Size(88, 88)),
+        onPanUpdate: (d) => _moveAimJoystick(d.localPosition, const Size(88, 88)),
+        onPanEnd: (_) => _releaseAimJoystick(),
+        onPanCancel: _releaseAimJoystick,
+        child: SizedBox(
+          width: 88,
+          height: 88,
+          child: Stack(alignment: Alignment.center, children: [
+            Container(
+              width: 84,
+              height: 84,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: const Color(0xFF172838).withOpacity(.96),
+                border: Border.all(color: Colors.white.withOpacity(.18), width: 2),
+                boxShadow: [BoxShadow(color: Colors.black.withOpacity(.25), blurRadius: 12, offset: const Offset(0, 4))],
+              ),
+            ),
+            Container(
+              width: 58,
+              height: 58,
+              decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: Colors.white.withOpacity(.10))),
+            ),
+            Transform.translate(
+              offset: _joystick * 25,
+              child: Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color(0xFFE7F6B7), lime, Color(0xFF83A83D)]),
+                  border: Border.all(color: Colors.white.withOpacity(.55), width: 1.5),
+                  boxShadow: [BoxShadow(color: lime.withOpacity(.22), blurRadius: 9)],
+                ),
+                child: const Icon(Icons.circle, color: Color(0xFF47621E), size: 9),
+              ),
+            ),
+          ]),
+        ),
+      ),
+      const SizedBox(height: 3),
+      const Text('MOVE TO AIM', style: TextStyle(color: muted, fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: .8)),
+    ]);
+  }
+
   Widget _matchControls() {
     return Container(
-      padding: const EdgeInsets.fromLTRB(19, 12, 19, 15),
+      padding: const EdgeInsets.fromLTRB(18, 10, 18, 12),
       decoration: BoxDecoration(
         color: const Color(0xFF0B1722),
         borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
         border: Border(top: BorderSide(color: Colors.white.withOpacity(.06))),
       ),
-      child: Column(children: [
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
         Row(children: [
           const Text('SHOT POWER', style: TextStyle(color: muted, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1.2)),
           const Spacer(),
@@ -1111,26 +1182,39 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
             onChanged: _shotTaken ? null : (v) => setState(() => _power = v),
           ),
         ),
-        const SizedBox(height: 3),
-        SizedBox(
-          width: double.infinity,
-          height: 55,
-          child: FilledButton(
-            onPressed: _shotTaken ? null : _shoot,
-            style: FilledButton.styleFrom(
-              backgroundColor: lime,
-              disabledBackgroundColor: panel2,
-              foregroundColor: ink,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(17)),
-            ),
-            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-              const Icon(Icons.sports_soccer_rounded, size: 20),
-              const SizedBox(width: 9),
-              Text(_shotTaken ? 'SHOT IN PLAY' : 'TAKE THE SHOT', style: const TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1.4, fontSize: 13)),
+        const SizedBox(height: 2),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            _virtualAimPad(),
+            const Spacer(),
+            Column(mainAxisSize: MainAxisSize.min, children: [
+              SizedBox(
+                width: 78,
+                height: 78,
+                child: FilledButton(
+                  onPressed: _shotTaken ? null : _shoot,
+                  style: FilledButton.styleFrom(
+                    padding: EdgeInsets.zero,
+                    shape: const CircleBorder(),
+                    backgroundColor: lime,
+                    disabledBackgroundColor: panel2,
+                    foregroundColor: ink,
+                    elevation: 5,
+                  ),
+                  child: const Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    Icon(Icons.sports_soccer_rounded, size: 27),
+                    SizedBox(height: 2),
+                    Text('SHOOT', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 10, letterSpacing: 1)),
+                  ]),
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(_shotTaken ? 'IN PLAY' : 'ACTION', style: const TextStyle(color: muted, fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: .8)),
             ]),
-          ),
+          ],
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 7),
         Row(mainAxisAlignment: MainAxisAlignment.center, children: [
           const Icon(Icons.shield_outlined, color: muted, size: 12),
           const SizedBox(width: 5),
