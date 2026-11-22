@@ -719,7 +719,17 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
   }
 
   Widget _matchProgress() {
-    final total = _mode == GameMode.quick ? 5 : _mode == GameMode.training ? 10 : 3;
+    if (_mode == GameMode.golden) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
+        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Text('GOALS $_score / 3', style: const TextStyle(color: lime, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1)),
+          const SizedBox(width: 18),
+          Text('SAVES $_saves / 3', style: const TextStyle(color: red, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1)),
+        ]),
+      );
+    }
+    final total = _mode == GameMode.quick ? 5 : 10;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: Row(children: List.generate(total, (i) {
@@ -891,6 +901,7 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
               const SizedBox(height: 22),
               Row(children: [
                 _resultStat('ATTEMPTS', '$_attempts'),
+                _resultStat('CONVERSION', '${_attempts == 0 ? 0 : (_score / _attempts * 100).round()}%'),
                 _resultStat('SAVES', '$_saves'),
                 _resultStat('BEST STREAK', '$_matchBestStreak'),
               ]),
@@ -1148,8 +1159,9 @@ class ProPitchPainter extends CustomPainter {
   void _drawKeeper(Canvas canvas, Size size, Rect goalRect) {
     final lane = shotTaken ? keeperLane : 1;
     final centerX = goalRect.left + goalRect.width * (lane + .5) / 3;
-    final keeperHeight = shotTaken ? (keeperVertical == 0 ? .32 : keeperVertical == 1 ? .64 : .84) : .77;
-    final baseY = goalRect.top + goalRect.height * keeperHeight;
+    final keeperHeight = keeperVertical == 0 ? .32 : keeperVertical == 1 ? .64 : .84;
+    final heightProgress = shotTaken ? Curves.easeOut.transform(progress) : 0.0;
+    final baseY = goalRect.top + goalRect.height * (.77 + (keeperHeight - .77) * heightProgress);
     final dive = shotTaken ? (targetLane - keeperLane).toDouble() * progress * 36 : 0.0;
     final x = centerX + dive;
     final y = baseY - (shotTaken && keeperLane == targetLane ? math.sin(progress * math.pi) * 12 : 0);
