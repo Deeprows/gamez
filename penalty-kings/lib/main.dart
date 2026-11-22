@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -11,6 +12,8 @@ const lime = Color(0xFFC7F36B);
 const muted = Color(0xFF8DA1B3);
 const red = Color(0xFFFF6878);
 const gold = Color(0xFFFFC65C);
+const keeperKits = <Color>[Color(0xFFFFB83F), Color(0xFF55B8FF), Color(0xFFFF6B8A), Color(0xFFB48CFF)];
+const keeperKitNames = <String>['GOLDEN CAPTAIN', 'ICE BLUE', 'NEON STRIKER', 'ROYAL PURPLE'];
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -51,7 +54,7 @@ class PenaltyKingsApp extends StatelessWidget {
   }
 }
 
-enum GameMode { quick, golden, training }
+enum GameMode { quick, golden, training, tournament }
 enum Screen { home, match, result, settings, career }
 
 class KingsShell extends StatefulWidget {
@@ -71,6 +74,11 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
   bool _sound = true;
   bool _vibration = true;
   bool _tutorialSeen = false;
+  int _keeperKitIndex = 0;
+  final List<String> _leaderboard = <String>[];
+  int _tournamentRound = 1;
+  int _opponentScore = 0;
+  String _opponentName = 'NORTH CITY';
   int _bestScore = 0;
   int _bestStreak = 0;
   int _careerShots = 0;
@@ -99,12 +107,15 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
   String _commentary = 'PICK YOUR CORNER';
   Timer? _nextShotTimer;
 
-  int get _maxShots => _mode == GameMode.quick ? 5 : 999;
-  bool get _finished => _mode == GameMode.quick && _attempts >= _maxShots;
+  int get _maxShots => (_mode == GameMode.quick || _mode == GameMode.tournament) ? 5 : 999;
+  bool get _finished => (_mode == GameMode.quick || _mode == GameMode.tournament) && _attempts >= _maxShots;
+  Color get _keeperKitColor => keeperKits[_keeperKitIndex.clamp(0, keeperKits.length - 1)];
+  String get _tournamentOpponent => const ['NORTH CITY', 'ROYAL ATHLETIC', 'TITAN FC'][_tournamentRound - 1];
   String get _modeTitle => switch (_mode) {
         GameMode.quick => 'QUICK SHOOTOUT',
         GameMode.golden => 'GOLDEN GOAL',
         GameMode.training => 'TRAINING GROUND',
+        GameMode.tournament => 'KING’S CUP TOURNAMENT',
       };
 
   @override
@@ -135,6 +146,10 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
       _sound = prefs.getBool('sound') ?? true;
       _vibration = prefs.getBool('vibration') ?? true;
       _tutorialSeen = prefs.getBool('tutorial_seen') ?? false;
+      _keeperKitIndex = (prefs.getInt('keeper_kit') ?? 0).clamp(0, keeperKits.length - 1);
+      _leaderboard
+        ..clear()
+        ..addAll(prefs.getStringList('local_leaderboard') ?? <String>[]);
     });
   }
 
@@ -150,6 +165,8 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
     await prefs.setBool('sound', _sound);
     await prefs.setBool('vibration', _vibration);
     await prefs.setBool('tutorial_seen', _tutorialSeen);
+    await prefs.setInt('keeper_kit', _keeperKitIndex);
+    await prefs.setStringList('local_leaderboard', _leaderboard);
   }
 
   @override
@@ -164,6 +181,9 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
     _nextShotTimer?.cancel();
     setState(() {
       _mode = mode;
+      _tournamentRound = 1;
+      _opponentName = mode == GameMode.tournament ? _tournamentOpponent : 'NORTH CITY';
+      _opponentScore = mode == GameMode.tournament ? _random.nextInt(6) : 0;
       _score = 0;
       _attempts = 0;
       _shotHistory.clear();
@@ -307,6 +327,7 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
     final trainingFinished = _mode == GameMode.training && _attempts >= 10;
     if (_finished || goldenFinished || trainingFinished) {
       _matchesPlayed++;
+      _recordLeaderboard();
       _saveStats();
       setState(() {
         _isResolving = false;
@@ -326,6 +347,48 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
       _commentary = 'PICK YOUR CORNER';
     });
     _shotAnimation.reset();
+  }
+
+  void _recordLeaderboard() {
+    if (_mode == GameMode.training || _mode == GameMode.golden) return;
+    final entry = '$_score|$_attempts|${_mode == GameMode.tournament ? 'KING’S CUP R$_tournamentRound' : 'QUICK SHOOTOUT'}';
+    _leaderboard.add(entry);
+    _leaderboard.sort((a, b) {
+      final aScore = int.tryParse(a.split('|').first) ?? 0;
+      final bScore = int.tryParse(b.split('|').first) ?? 0;
+      return bScore.compareTo(aScore);
+    });
+    if (_leaderboard.length > 5) _leaderboard.removeRange(5, _leaderboard.length);
+  }
+
+  void _startNextTournamentRound() {
+    if (_tournamentRound >= 3 || _score <= _opponentScore) return;
+    setState(() {
+      _tournamentRound++;
+      _opponentName = _tournamentOpponent;
+      _opponentScore = _random.nextInt(6);
+      _score = 0;
+      _attempts = 0;
+      _saves = 0;
+      _streak = 0;
+      _matchBestStreak = 0;
+      _shotHistory.clear();
+      _shotTaken = false;
+      _goal = false;
+      _saved = false;
+      _wide = false;
+      _isResolving = false;
+      _aim = const Offset(0, -.68);
+      _power = .72;
+      _commentary = 'CUP SEMI-FINAL • PICK YOUR CORNER';
+      _screen = Screen.match;
+    });
+    _shotAnimation.reset();
+  }
+
+  void _cycleKeeperKit() {
+    setState(() => _keeperKitIndex = (_keeperKitIndex + 1) % keeperKits.length);
+    _saveStats();
   }
 
   void _returnHome() {
@@ -423,6 +486,15 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
                 subtitle: 'First to 3 goals wins the shootout',
                 tag: 'SUDDEN DEATH',
                 onTap: () => _start(GameMode.golden),
+                accent: gold,
+              ),
+              const SizedBox(height: 10),
+              _modeCard(
+                icon: Icons.emoji_events_rounded,
+                title: 'KING’S CUP',
+                subtitle: '3-round knockout • Win the trophy',
+                tag: 'TOURNAMENT',
+                onTap: () => _start(GameMode.tournament),
                 accent: gold,
               ),
               const SizedBox(height: 10),
@@ -541,6 +613,29 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
             _careerStat('CONVERSION', '$accuracy%', Icons.gps_fixed_rounded, lime),
             _careerStat('BEST STREAK', '$_bestStreak', Icons.local_fire_department_rounded, red),
           ],
+        ),
+        const SizedBox(height: 20),
+        const Text('LOCAL LEADERBOARD', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 1.3)),
+        const SizedBox(height: 9),
+        Container(
+          padding: const EdgeInsets.all(13),
+          decoration: BoxDecoration(color: panel, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white.withOpacity(.05))),
+          child: _leaderboard.isEmpty
+              ? const Text('Your best five shootouts will appear here.', style: TextStyle(color: muted, fontSize: 10))
+              : Column(children: _leaderboard.asMap().entries.map((entry) {
+                  final parts = entry.value.split('|');
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Row(children: [
+                      Text('#${entry.key + 1}', style: const TextStyle(color: gold, fontWeight: FontWeight.w900, fontSize: 11)),
+                      const SizedBox(width: 12),
+                      Expanded(child: Text(parts.length > 2 ? parts[2] : 'SHOOTOUT', style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w800))),
+                      Text(parts.first, style: const TextStyle(color: lime, fontWeight: FontWeight.w900, fontSize: 16)),
+                      const SizedBox(width: 5),
+                      const Text('GOALS', style: TextStyle(color: muted, fontSize: 8)),
+                    ]),
+                  );
+                }).toList()),
         ),
         const SizedBox(height: 20),
         const Text('ACHIEVEMENTS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 1.3)),
@@ -693,7 +788,9 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
             const SizedBox(width: 8),
             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(_modeTitle, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13, letterSpacing: 1.1)),
-              Text('$_difficulty • MATCH ${_mode == GameMode.golden ? 'SUDDEN DEATH' : '$_round'}', style: const TextStyle(color: muted, fontSize: 9, letterSpacing: 1)),
+              Text(_mode == GameMode.tournament
+              ? 'KING’S CUP • ROUND $_tournamentRound / 3'
+              : '$_difficulty • MATCH ${_mode == GameMode.golden ? 'SUDDEN DEATH' : '$_round'}', style: const TextStyle(color: muted, fontSize: 9, letterSpacing: 1)),
             ])),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
@@ -706,6 +803,15 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
             ),
           ]),
         ),
+        if (_mode == GameMode.tournament)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
+            child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+              Text('YOU  $_score', style: const TextStyle(color: lime, fontSize: 10, fontWeight: FontWeight.w900)),
+              Text('VS  $_opponentName', style: const TextStyle(color: muted, fontSize: 9, fontWeight: FontWeight.w900)),
+              Text('$_opponentScore  CPU', style: const TextStyle(color: gold, fontSize: 10, fontWeight: FontWeight.w900)),
+            ]),
+          ),
         _matchProgress(),
         Expanded(
           child: Padding(
@@ -762,6 +868,7 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
               builder: (context, _) => CustomPaint(
                 painter: ProPitchPainter(
                   aim: _aim,
+                  keeperKitColor: _keeperKitColor,
                   keeperLane: _keeperLane,
                   keeperVertical: _keeperVertical,
                   targetLane: _targetLane,
@@ -870,11 +977,15 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
   }
 
   Widget _resultScreen() {
-    final title = _mode == GameMode.quick
-        ? (_score >= 5 ? 'PERFECT FIVE!' : _score >= 4 ? 'ELITE FINISHER!' : _score >= 3 ? 'SOLID PERFORMANCE' : 'KEEP PRACTISING')
-        : _mode == GameMode.golden
-            ? (_score >= 3 ? 'GOLDEN GOAL!' : 'THE KEEPER WINS')
-            : 'TRAINING COMPLETE';
+    final tournamentWon = _mode == GameMode.tournament && _score > _opponentScore;
+    final tournamentChampion = tournamentWon && _tournamentRound == 3;
+    final title = _mode == GameMode.tournament
+        ? (tournamentChampion ? 'KING’S CUP CHAMPION!' : tournamentWon ? 'ROUND WON!' : 'TOURNAMENT OVER')
+        : _mode == GameMode.quick
+            ? (_score >= 5 ? 'PERFECT FIVE!' : _score >= 4 ? 'ELITE FINISHER!' : _score >= 3 ? 'SOLID PERFORMANCE' : 'KEEP PRACTISING')
+            : _mode == GameMode.golden
+                ? (_score >= 3 ? 'GOLDEN GOAL!' : 'THE KEEPER WINS')
+                : 'TRAINING COMPLETE';
     return Center(
       key: const ValueKey('result'),
       child: SingleChildScrollView(
@@ -891,6 +1002,11 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
           Text(title, textAlign: TextAlign.center, style: const TextStyle(fontSize: 25, fontWeight: FontWeight.w900, letterSpacing: .6)),
           const SizedBox(height: 9),
           Text(_modeTitle, style: const TextStyle(color: muted, fontSize: 10, letterSpacing: 1.6)),
+          if (_mode == GameMode.tournament) ...[
+            const SizedBox(height: 12),
+            Text('$_score  —  $_opponentScore', style: const TextStyle(fontSize: 25, fontWeight: FontWeight.w900, color: gold)),
+            Text('YOU  vs  $_opponentName', style: const TextStyle(color: muted, fontSize: 9, letterSpacing: 1.2)),
+          ],
           const SizedBox(height: 25),
           Container(
             padding: const EdgeInsets.all(21),
@@ -915,6 +1031,15 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
               child: const Text('★  PERSONAL BEST UPDATED', style: TextStyle(color: lime, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1)),
             ),
           const SizedBox(height: 25),
+          if (_mode == GameMode.tournament && tournamentWon && !tournamentChampion) ...[
+            SizedBox(width: double.infinity, height: 54, child: FilledButton.icon(
+              onPressed: _startNextTournamentRound,
+              icon: const Icon(Icons.arrow_forward_rounded),
+              label: const Text('NEXT ROUND', style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1.2)),
+              style: FilledButton.styleFrom(backgroundColor: gold, foregroundColor: ink, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
+            )),
+            const SizedBox(height: 10),
+          ],
           SizedBox(width: double.infinity, height: 54, child: FilledButton.icon(
             onPressed: () => _start(_mode),
             icon: const Icon(Icons.replay_rounded),
@@ -952,6 +1077,7 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
         const SizedBox(height: 20),
         _settingsGroup('GAMEPLAY', [
           _settingTile(Icons.speed_rounded, 'Goalkeeper difficulty', _difficulty, onTap: _cycleDifficulty),
+          _settingTile(Icons.palette_rounded, 'Goalkeeper kit', keeperKitNames[_keeperKitIndex], onTap: _cycleKeeperKit),
           _settingTile(Icons.school_rounded, 'How to play', 'View tutorial', onTap: _showTutorial),
         ]),
         const SizedBox(height: 15),
@@ -1060,6 +1186,7 @@ class StadiumBackdropPainter extends CustomPainter {
 
 class ProPitchPainter extends CustomPainter {
   final Offset aim;
+  final Color keeperKitColor;
   final int keeperLane;
   final int keeperVertical;
   final int targetLane;
@@ -1072,6 +1199,7 @@ class ProPitchPainter extends CustomPainter {
 
   ProPitchPainter({
     required this.aim,
+    required this.keeperKitColor,
     required this.keeperLane,
     required this.keeperVertical,
     required this.targetLane,
@@ -1165,7 +1293,7 @@ class ProPitchPainter extends CustomPainter {
     final dive = shotTaken ? (targetLane - keeperLane).toDouble() * progress * 36 : 0.0;
     final x = centerX + dive;
     final y = baseY - (shotTaken && keeperLane == targetLane ? math.sin(progress * math.pi) * 12 : 0);
-    final bodyColor = const Color(0xFFFFB83F);
+    final bodyColor = keeperKitColor;
     final body = Paint()..color = bodyColor;
     final outline = Paint()..color = const Color(0xFF1B2931)..strokeWidth = 7..strokeCap = StrokeCap.round;
     final skin = Paint()..color = const Color(0xFFC98C68);
@@ -1209,6 +1337,7 @@ class ProPitchPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant ProPitchPainter old) =>
       old.aim != aim ||
+      old.keeperKitColor != keeperKitColor ||
       old.keeperLane != keeperLane ||
       old.keeperVertical != keeperVertical ||
       old.targetLane != targetLane ||
