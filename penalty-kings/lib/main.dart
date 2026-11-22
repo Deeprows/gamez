@@ -237,7 +237,7 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
   }
 
 
-  Future<void> _chooseTeamsAndStart(GameMode mode) async {
+  Future<void> _chooseTeamsAndStart(GameMode? mode) async {
     var national = nationalTeams.any((t) => t.id == _selectedTeam.id);
     var player = _selectedTeam;
     var opponent = _selectedOpponent;
@@ -280,22 +280,22 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
             const Text('Choose your favourite team and the opponent you want to face.',style:TextStyle(color:muted,fontSize:11)),
             const SizedBox(height:15),
             Container(padding:const EdgeInsets.all(4),decoration:BoxDecoration(color:ink,borderRadius:BorderRadius.circular(13)),child:Row(children:[
-              Expanded(child:_categoryChoice('CLUBS',!national,()=>updateSheet(()=>{national=false;player=clubTeams.first;opponent=clubTeams[3];}))),
-              Expanded(child:_categoryChoice('NATIONAL TEAMS',national,()=>updateSheet(()=>{national=true;player=nationalTeams.first;opponent=nationalTeams[7];}))),
+              Expanded(child:_categoryChoice('CLUBS',!national,()=>updateSheet(() { national = false; player = clubTeams.first; opponent = clubTeams[3]; }))),
+              Expanded(child:_categoryChoice('NATIONAL TEAMS',national,()=>updateSheet(() { national = true; player = nationalTeams.first; opponent = nationalTeams[7]; }))),
             ])),
             const SizedBox(height:16),
-            selector('YOUR TEAM',player,(t)=>updateSheet(()=>{player=t;if(opponent.id==player.id)opponent=teams.firstWhere((x)=>x.id!=player.id);})),
+            selector('YOUR TEAM',player,(t)=>updateSheet(() { player = t; if (opponent.id == player.id) opponent = teams.firstWhere((x) => x.id != player.id); })),
             const SizedBox(height:12),
-            selector('YOUR OPPONENT',opponent,(t)=>updateSheet(()=>opponent=t)),
+            selector('YOUR OPPONENT',opponent,(t)=>updateSheet(() { opponent = t; })),
             const SizedBox(height:16),
             Row(children:[Expanded(child:_teamPreview(player,'HOME')),Padding(padding:const EdgeInsets.symmetric(horizontal:8),child:Text('VS',style:TextStyle(color:gold,fontWeight:FontWeight.w900))),Expanded(child:_teamPreview(opponent,'AWAY'))]),
             const SizedBox(height:18),
             SizedBox(width:double.infinity,height:52,child:FilledButton(
               onPressed:player.id==opponent.id?null:(){
-                setState(()=>{_selectedTeam=player;_selectedOpponent=opponent;});
+                setState(() { _selectedTeam = player; _selectedOpponent = opponent; });
                 _saveStats();
                 Navigator.pop(sheetContext);
-                _start(mode);
+                if (mode != null) _start(mode);
               },
               style:FilledButton.styleFrom(backgroundColor:lime,foregroundColor:ink,disabledBackgroundColor:panel2,shape:RoundedRectangleBorder(borderRadius:BorderRadius.circular(15))),
               child:const Text('CONFIRM TEAMS & PLAY',style:TextStyle(fontWeight:FontWeight.w900,letterSpacing:1)),
@@ -326,7 +326,7 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
 
   Widget _matchupCard()=>Material(
     color:panel,borderRadius:BorderRadius.circular(18),
-    child:InkWell(onTap:()=>_chooseTeamsAndStart(_mode),borderRadius:BorderRadius.circular(18),
+    child:InkWell(onTap:()=>_chooseTeamsAndStart(null),borderRadius:BorderRadius.circular(18),
       child:Padding(padding:const EdgeInsets.all(13),child:Row(children:[
         _teamBadge(_selectedTeam,size:42),const SizedBox(width:9),
         Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
@@ -527,7 +527,7 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
     if (_tournamentRound >= 3 || _score <= _opponentScore) return;
     setState(() {
       _tournamentRound++;
-      _opponentName = _tournamentOpponent;
+      _opponentName = _selectedOpponent.name;
       _opponentScore = _random.nextInt(6);
       _score = 0;
       _attempts = 0;
