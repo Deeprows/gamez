@@ -1,0 +1,1185 @@
+import 'dart:async';
+import 'dart:math' as math;
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+const ink = Color(0xFF071019);
+const panel = Color(0xFF101D2A);
+const panel2 = Color(0xFF172838);
+const lime = Color(0xFFC7F36B);
+const muted = Color(0xFF8DA1B3);
+const red = Color(0xFFFF6878);
+const gold = Color(0xFFFFC65C);
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown,
+  ]);
+  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+    statusBarColor: ink,
+    systemNavigationBarColor: ink,
+    statusBarIconBrightness: Brightness.light,
+    systemNavigationBarIconBrightness: Brightness.light,
+  ));
+  runApp(const PenaltyKingsApp());
+}
+
+class PenaltyKingsApp extends StatelessWidget {
+  const PenaltyKingsApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Penalty Kings',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        brightness: Brightness.dark,
+        scaffoldBackgroundColor: ink,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: lime,
+          brightness: Brightness.dark,
+          surface: panel,
+        ),
+        useMaterial3: true,
+        fontFamily: 'Roboto',
+      ),
+      home: const KingsShell(),
+    );
+  }
+}
+
+enum GameMode { quick, golden, training }
+enum Screen { home, match, result, settings, career }
+
+class KingsShell extends StatefulWidget {
+  const KingsShell({super.key});
+
+  @override
+  State<KingsShell> createState() => _KingsShellState();
+}
+
+class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
+  final math.Random _random = math.Random();
+  late final AnimationController _shotAnimation;
+  late final AnimationController _pulseAnimation;
+  Screen _screen = Screen.home;
+  GameMode _mode = GameMode.quick;
+  String _difficulty = 'PRO';
+  bool _sound = true;
+  bool _vibration = true;
+  bool _tutorialSeen = false;
+  int _bestScore = 0;
+  int _bestStreak = 0;
+  int _careerShots = 0;
+  int _careerGoals = 0;
+  int _careerSaves = 0;
+  int _matchesPlayed = 0;
+  int _score = 0;
+  int _attempts = 0;
+  int _streak = 0;
+  int _saves = 0;
+  int _round = 1;
+  int _keeperLane = 1;
+  int _targetLane = 1;
+  double _power = .72;
+  Offset _aim = const Offset(.0, -.68);
+  bool _shotTaken = false;
+  bool _goal = false;
+  bool _saved = false;
+  bool _wide = false;
+  bool _isResolving = false;
+  String _commentary = 'PICK YOUR CORNER';
+  Timer? _nextShotTimer;
+
+  int get _maxShots => _mode == GameMode.quick ? 5 : 999;
+  bool get _finished => _mode == GameMode.quick && _attempts >= _maxShots;
+  String get _modeTitle => switch (_mode) {
+        GameMode.quick => 'QUICK SHOOTOUT',
+        GameMode.golden => 'GOLDEN GOAL',
+        GameMode.training => 'TRAINING GROUND',
+      };
+
+  @override
+  void initState() {
+    super.initState();
+    _shotAnimation = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 760),
+    );
+    _pulseAnimation = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1150),
+    )..repeat(reverse: true);
+    _loadStats();
+  }
+
+  Future<void> _loadStats() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _bestScore = prefs.getInt('best_score') ?? 0;
+      _bestStreak = prefs.getInt('best_streak') ?? 0;
+      _careerShots = prefs.getInt('career_shots') ?? 0;
+      _careerGoals = prefs.getInt('career_goals') ?? 0;
+      _careerSaves = prefs.getInt('career_saves') ?? 0;
+      _matchesPlayed = prefs.getInt('matches_played') ?? 0;
+      _sound = prefs.getBool('sound') ?? true;
+      _vibration = prefs.getBool('vibration') ?? true;
+      _tutorialSeen = prefs.getBool('tutorial_seen') ?? false;
+    });
+  }
+
+  Future<void> _saveStats() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('best_score', _bestScore);
+    await prefs.setInt('best_streak', _bestStreak);
+    await prefs.setInt('career_shots', _careerShots);
+    await prefs.setInt('career_goals', _careerGoals);
+    await prefs.setInt('career_saves', _careerSaves);
+    await prefs.setInt('matches_played', _matchesPlayed);
+    await prefs.setBool('sound', _sound);
+    await prefs.setBool('vibration', _vibration);
+    await prefs.setBool('tutorial_seen', _tutorialSeen);
+  }
+
+  @override
+  void dispose() {
+    _nextShotTimer?.cancel();
+    _shotAnimation.dispose();
+    _pulseAnimation.dispose();
+    super.dispose();
+  }
+
+  void _start(GameMode mode) {
+    _nextShotTimer?.cancel();
+    setState(() {
+      _mode = mode;
+      _score = 0;
+      _attempts = 0;
+      _streak = 0;
+      _saves = 0;
+      _round = 1;
+      _shotTaken = false;
+      _goal = false;
+      _saved = false;
+      _wide = false;
+      _isResolving = false;
+      _power = .72;
+      _aim = const Offset(0, -.68);
+      _commentary = 'PICK YOUR CORNER';
+      _screen = Screen.match;
+    });
+    _shotAnimation.reset();
+    if (!_tutorialSeen) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _screen == Screen.match) _showTutorial();
+      });
+    }
+  }
+
+  void _showTutorial() {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: panel,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: const Text('HOW TO TAKE THE PERFECT PENALTY',
+            style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _TutorialLine(icon: Icons.touch_app_rounded, text: 'Drag on the pitch to aim at a corner.'),
+            SizedBox(height: 12),
+            _TutorialLine(icon: Icons.bolt_rounded, text: 'Set your shot power with the power bar.'),
+            SizedBox(height: 12),
+            _TutorialLine(icon: Icons.sports_soccer_rounded, text: 'Tap SHOOT. The goalkeeper will try to read your shot.'),
+            SizedBox(height: 12),
+            _TutorialLine(icon: Icons.emoji_events_rounded, text: 'Score, build streaks and beat your personal best.'),
+          ],
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _tutorialSeen = true;
+              _saveStats();
+            },
+            style: FilledButton.styleFrom(backgroundColor: lime, foregroundColor: ink),
+            child: const Text('LET’S PLAY'),
+          )
+        ],
+      ),
+    );
+  }
+
+  void _setAim(Offset local, Size size) {
+    if (_shotTaken || _isResolving) return;
+    final x = ((local.dx / size.width) * 2 - 1).clamp(-.92, .92);
+    final y = ((local.dy / size.height) * 2 - 1).clamp(-.92, .28);
+    setState(() => _aim = Offset(x.toDouble(), y.toDouble()));
+  }
+
+  void _shoot() {
+    if (_shotTaken || _isResolving) return;
+    FocusManager.instance.primaryFocus?.unfocus();
+    final lane = _aim.dx < -.29 ? 0 : (_aim.dx > .29 ? 2 : 1);
+    final vertical = _aim.dy < -.58 ? 0 : (_aim.dy > -.12 ? 2 : 1);
+    final keeperRead = _random.nextInt(3);
+    final keeperHeightRead = _random.nextInt(3);
+    final difficultyFactor = switch (_difficulty) {
+      'AMATEUR' => .36,
+      'WORLD CLASS' => .59,
+      _ => .48,
+    };
+    final keeperMatches = lane == keeperRead && vertical == keeperHeightRead;
+    final lowPowerMiss = _power < .18;
+    final overhit = _power > .97 && _random.nextDouble() < .22;
+    final keeperSave = keeperMatches &&
+        _random.nextDouble() < difficultyFactor + (_power < .38 ? .12 : 0);
+    final isWide = lowPowerMiss || overhit || _random.nextDouble() < .035;
+    final isGoal = !keeperSave && !isWide;
+
+    setState(() {
+      _shotTaken = true;
+      _isResolving = true;
+      _attempts++;
+      _careerShots++;
+      if (isGoal) _careerGoals++;
+      if (keeperSave) _careerSaves++;
+      _keeperLane = keeperRead;
+      _targetLane = lane;
+      _goal = isGoal;
+      _saved = keeperSave;
+      _wide = isWide;
+      if (isGoal) {
+        _score++;
+        _streak++;
+        _commentary = _streak >= 3 ? 'ICE IN YOUR VEINS!' : 'WHAT A FINISH!';
+      } else if (keeperSave) {
+        _saves++;
+        _streak = 0;
+        _commentary = 'THE KEEPER READ IT!';
+      } else {
+        _streak = 0;
+        _commentary = 'JUST OFF TARGET!';
+      }
+      if (_score > _bestScore) _bestScore = _score;
+      if (_streak > _bestStreak) _bestStreak = _streak;
+    });
+
+    if (_vibration) {
+      if (isGoal) {
+        HapticFeedback.mediumImpact();
+      } else {
+        HapticFeedback.lightImpact();
+      }
+    }
+    _saveStats();
+    _shotAnimation.forward(from: 0).whenComplete(() {
+      if (!mounted) return;
+      _nextShotTimer = Timer(const Duration(milliseconds: 1450), _advanceAfterShot);
+    });
+  }
+
+  void _advanceAfterShot() {
+    if (!mounted) return;
+    final goldenFinished = _mode == GameMode.golden && (_score >= 3 || _saves >= 3);
+    final trainingFinished = _mode == GameMode.training && _attempts >= 10;
+    if (_finished || goldenFinished || trainingFinished) {
+      _matchesPlayed++;
+      _saveStats();
+      setState(() {
+        _isResolving = false;
+        _screen = Screen.result;
+      });
+      return;
+    }
+    setState(() {
+      _round++;
+      _shotTaken = false;
+      _isResolving = false;
+      _goal = false;
+      _saved = false;
+      _wide = false;
+      _aim = const Offset(0, -.68);
+      _power = .72;
+      _commentary = 'PICK YOUR CORNER';
+    });
+    _shotAnimation.reset();
+  }
+
+  void _returnHome() {
+    _nextShotTimer?.cancel();
+    setState(() => _screen = Screen.home);
+  }
+
+  void _toggleSound(bool value) {
+    setState(() => _sound = value);
+    _saveStats();
+  }
+
+  void _toggleVibration(bool value) {
+    setState(() => _vibration = value);
+    _saveStats();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: DecoratedBox(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xFF0C1A26), ink, Color(0xFF050B11)],
+          ),
+        ),
+        child: SafeArea(
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 280),
+            child: switch (_screen) {
+              Screen.home => _homeScreen(),
+              Screen.match => _matchScreen(),
+              Screen.result => _resultScreen(),
+              Screen.settings => _settingsScreen(),
+              Screen.career => _careerScreen(),
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _homeScreen() {
+    return LayoutBuilder(builder: (context, box) {
+      return SingleChildScrollView(
+        key: const ValueKey('home'),
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: box.maxHeight - 36),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  _brandMark(),
+                  const SizedBox(width: 11),
+                  const Expanded(child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('PENALTY KINGS', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, letterSpacing: 1.5)),
+                      Text('THE SPOTLIGHT IS YOURS', style: TextStyle(color: muted, fontSize: 9, letterSpacing: 2)),
+                    ],
+                  )),
+                  IconButton(
+                    onPressed: () => setState(() => _screen = Screen.settings),
+                    icon: const Icon(Icons.settings_rounded, color: muted),
+                    tooltip: 'Settings',
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24),
+              _heroBanner(),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  const Expanded(child: Text('CHOOSE YOUR CHALLENGE', style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1.4, fontSize: 12))),
+                  Text('SEASON 01', style: TextStyle(color: lime.withOpacity(.8), fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1.2)),
+                ],
+              ),
+              const SizedBox(height: 12),
+              _modeCard(
+                icon: Icons.bolt_rounded,
+                title: 'QUICK SHOOTOUT',
+                subtitle: '5 penalties • Beat your best score',
+                tag: 'CLASSIC',
+                onTap: () => _start(GameMode.quick),
+                accent: lime,
+              ),
+              const SizedBox(height: 10),
+              _modeCard(
+                icon: Icons.workspace_premium_rounded,
+                title: 'GOLDEN GOAL',
+                subtitle: 'First to 3 goals wins the shootout',
+                tag: 'SUDDEN DEATH',
+                onTap: () => _start(GameMode.golden),
+                accent: gold,
+              ),
+              const SizedBox(height: 10),
+              _modeCard(
+                icon: Icons.sports_soccer_rounded,
+                title: 'TRAINING GROUND',
+                subtitle: '10 attempts • Sharpen your accuracy',
+                tag: 'PRACTICE',
+                onTap: () => _start(GameMode.training),
+                accent: const Color(0xFF73C8FF),
+              ),
+              const SizedBox(height: 18),
+              Row(
+                children: [
+                  Expanded(child: _recordCard('PERSONAL BEST', '$_bestScore', Icons.emoji_events_rounded, gold)),
+                  const SizedBox(width: 10),
+                  Expanded(child: _recordCard('BEST STREAK', '$_bestStreak', Icons.local_fire_department_rounded, red)),
+                ],
+              ),
+              const SizedBox(height: 12),
+              _careerShortcut(),
+              const SizedBox(height: 18),
+              const Center(child: Text('NO SHORTCUTS. JUST NERVES OF STEEL.', style: TextStyle(color: Color(0xFF617789), fontSize: 9, letterSpacing: 1.4, fontWeight: FontWeight.w700))),
+            ],
+          ),
+        ),
+      );
+    });
+  }
+
+
+  Widget _careerShortcut() {
+    final accuracy = _careerShots == 0 ? 0 : ((_careerGoals / _careerShots) * 100).round();
+    return Material(
+      color: panel,
+      borderRadius: BorderRadius.circular(17),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(17),
+        onTap: () => setState(() => _screen = Screen.career),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 13),
+          child: Row(children: [
+            Container(
+              width: 42, height: 42,
+              decoration: BoxDecoration(color: gold.withOpacity(.13), borderRadius: BorderRadius.circular(13)),
+              child: const Icon(Icons.query_stats_rounded, color: gold),
+            ),
+            const SizedBox(width: 12),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('CAREER & ACHIEVEMENTS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: .8)),
+              const SizedBox(height: 3),
+              Text('$_matchesPlayed matches  •  $accuracy% conversion', style: const TextStyle(color: muted, fontSize: 9)),
+            ])),
+            const Icon(Icons.arrow_forward_ios_rounded, color: muted, size: 15),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Widget _careerScreen() {
+    final accuracy = _careerShots == 0 ? 0 : ((_careerGoals / _careerShots) * 100).round();
+    final milestones = <(String, String, bool, IconData)>[
+      ('First Steps', 'Play your first match', _matchesPlayed >= 1, Icons.flag_rounded),
+      ('Clinical Finisher', 'Score 10 career goals', _careerGoals >= 10, Icons.gps_fixed_rounded),
+      ('Top Corner', 'Score 25 career goals', _careerGoals >= 25, Icons.stars_rounded),
+      ('Wall Breaker', 'Beat the keeper 50 times', _careerGoals >= 50, Icons.shield_rounded),
+      ('Veteran', 'Play 20 matches', _matchesPlayed >= 20, Icons.military_tech_rounded),
+      ('Unshakeable', 'Reach a 5-shot best streak', _bestStreak >= 5, Icons.local_fire_department_rounded),
+    ];
+    final unlocked = milestones.where((m) => m.$3).length;
+    return SingleChildScrollView(
+      key: const ValueKey('career'),
+      padding: const EdgeInsets.fromLTRB(20, 10, 20, 25),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          IconButton(onPressed: () => setState(() => _screen = Screen.home), icon: const Icon(Icons.arrow_back_rounded)),
+          const SizedBox(width: 6),
+          const Text('YOUR CAREER', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, letterSpacing: 1.2)),
+        ]),
+        const SizedBox(height: 14),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(19),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(22),
+            gradient: const LinearGradient(colors: [Color(0xFF284E3D), Color(0xFF142A2B), Color(0xFF142033)]),
+          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('THE RECORD BOOK', style: TextStyle(color: lime, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1.8)),
+            const SizedBox(height: 8),
+            Text('$unlocked / ${milestones.length}', style: const TextStyle(fontSize: 34, fontWeight: FontWeight.w900)),
+            const Text('ACHIEVEMENTS UNLOCKED', style: TextStyle(color: Colors.white70, fontSize: 9, letterSpacing: 1.4)),
+            const SizedBox(height: 13),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: LinearProgressIndicator(value: unlocked / milestones.length, minHeight: 7, backgroundColor: Colors.white12, color: lime),
+            ),
+          ]),
+        ),
+        const SizedBox(height: 18),
+        const Text('CAREER STATISTICS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 1.3)),
+        const SizedBox(height: 10),
+        GridView.count(
+          crossAxisCount: 2,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          mainAxisSpacing: 9,
+          crossAxisSpacing: 9,
+          childAspectRatio: 1.75,
+          children: [
+            _careerStat('MATCHES PLAYED', '$_matchesPlayed', Icons.sports_soccer_rounded, lime),
+            _careerStat('TOTAL GOALS', '$_careerGoals', Icons.sports_score_rounded, gold),
+            _careerStat('SHOTS TAKEN', '$_careerShots', Icons.track_changes_rounded, const Color(0xFF73C8FF)),
+            _careerStat('KEEPER SAVES', '$_careerSaves', Icons.pan_tool_alt_rounded, red),
+            _careerStat('CONVERSION', '$accuracy%', Icons.gps_fixed_rounded, lime),
+            _careerStat('BEST STREAK', '$_bestStreak', Icons.local_fire_department_rounded, red),
+          ],
+        ),
+        const SizedBox(height: 20),
+        const Text('ACHIEVEMENTS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 1.3)),
+        const SizedBox(height: 10),
+        ...milestones.map((m) => Container(
+          margin: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.all(13),
+          decoration: BoxDecoration(
+            color: panel,
+            borderRadius: BorderRadius.circular(15),
+            border: Border.all(color: m.$3 ? lime.withOpacity(.35) : Colors.white.withOpacity(.05)),
+          ),
+          child: Row(children: [
+            Container(
+              width: 39, height: 39,
+              decoration: BoxDecoration(color: (m.$3 ? lime : muted).withOpacity(.13), borderRadius: BorderRadius.circular(12)),
+              child: Icon(m.$4, color: m.$3 ? lime : muted),
+            ),
+            const SizedBox(width: 11),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(m.$1, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w900)),
+              const SizedBox(height: 3),
+              Text(m.$2, style: const TextStyle(color: muted, fontSize: 9)),
+            ])),
+            Icon(m.$3 ? Icons.check_circle_rounded : Icons.lock_rounded, color: m.$3 ? lime : muted, size: 18),
+          ]),
+        )),
+      ]),
+    );
+  }
+
+  Widget _careerStat(String label, String value, IconData icon, Color color) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(color: panel, borderRadius: BorderRadius.circular(15), border: Border.all(color: Colors.white.withOpacity(.05))),
+      child: Row(children: [
+        Icon(icon, color: color, size: 21),
+        const SizedBox(width: 9),
+        Expanded(child: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(value, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
+          Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: muted, fontSize: 8, fontWeight: FontWeight.w800, letterSpacing: .5)),
+        ])),
+      ]),
+    );
+  }
+
+  Widget _brandMark() => Container(
+    width: 43, height: 43,
+    decoration: BoxDecoration(color: lime, borderRadius: BorderRadius.circular(14), boxShadow: [BoxShadow(color: lime.withOpacity(.18), blurRadius: 18)]),
+    child: const Icon(Icons.sports_soccer_rounded, color: ink, size: 27),
+  );
+
+  Widget _heroBanner() {
+    return Container(
+      height: 190,
+      width: double.infinity,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(25),
+        border: Border.all(color: Colors.white.withOpacity(.09)),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF244B3C), Color(0xFF132D2C), Color(0xFF102033)],
+        ),
+      ),
+      child: Stack(
+        children: [
+          Positioned.fill(child: CustomPaint(painter: StadiumBackdropPainter())),
+          Positioned(right: -8, bottom: -22, child: Transform.rotate(angle: -.23, child: Icon(Icons.sports_soccer_rounded, size: 170, color: Colors.white.withOpacity(.10)))),
+          Positioned(left: 19, top: 19, child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(color: lime, borderRadius: BorderRadius.circular(30)),
+            child: const Text('NEW SEASON', style: TextStyle(color: ink, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1.2)),
+          )),
+          const Positioned(left: 20, bottom: 20, child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('OWN THE', style: TextStyle(fontSize: 29, fontWeight: FontWeight.w900, height: 1)),
+              Text('MOMENT.', style: TextStyle(fontSize: 29, fontWeight: FontWeight.w900, color: lime, height: 1.05)),
+              SizedBox(height: 7),
+              Text('One ball. One keeper. Your legacy.', style: TextStyle(color: Color(0xFFD2E0DB), fontSize: 11)),
+            ],
+          )),
+          Positioned(right: 16, top: 17, child: Icon(Icons.stadium_rounded, size: 22, color: Colors.white.withOpacity(.7))),
+        ],
+      ),
+    );
+  }
+
+  Widget _modeCard({required IconData icon, required String title, required String subtitle, required String tag, required VoidCallback onTap, required Color accent}) {
+    return Material(
+      color: panel,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 14),
+          decoration: BoxDecoration(borderRadius: BorderRadius.circular(18), border: Border.all(color: Colors.white.withOpacity(.055))),
+          child: Row(
+            children: [
+              Container(width: 46, height: 46, decoration: BoxDecoration(color: accent.withOpacity(.13), borderRadius: BorderRadius.circular(14)), child: Icon(icon, color: accent, size: 25)),
+              const SizedBox(width: 13),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(title, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 12, letterSpacing: .8)),
+                const SizedBox(height: 4),
+                Text(subtitle, style: const TextStyle(color: muted, fontSize: 10)),
+              ])),
+              Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                Text(tag, style: TextStyle(color: accent, fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: 1)),
+                const SizedBox(height: 7),
+                Icon(Icons.arrow_forward_rounded, color: Colors.white.withOpacity(.7), size: 18),
+              ]),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _recordCard(String label, String value, IconData icon, Color color) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(color: panel, borderRadius: BorderRadius.circular(17), border: Border.all(color: Colors.white.withOpacity(.05))),
+      child: Row(children: [
+        Icon(icon, color: color, size: 22),
+        const SizedBox(width: 10),
+        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(label, style: const TextStyle(color: muted, fontSize: 8, fontWeight: FontWeight.w800, letterSpacing: .8)),
+          const SizedBox(height: 3),
+          Text(value, style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w900)),
+        ]),
+      ]),
+    );
+  }
+
+  Widget _matchScreen() {
+    return Column(
+      key: const ValueKey('match'),
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 7, 16, 8),
+          child: Row(children: [
+            IconButton(
+              onPressed: () => _confirmExit(),
+              icon: const Icon(Icons.close_rounded),
+              style: IconButton.styleFrom(backgroundColor: panel),
+            ),
+            const SizedBox(width: 8),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(_modeTitle, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13, letterSpacing: 1.1)),
+              Text('$_difficulty • MATCH ${_mode == GameMode.golden ? 'SUDDEN DEATH' : '$_round'}', style: const TextStyle(color: muted, fontSize: 9, letterSpacing: 1)),
+            ])),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
+              decoration: BoxDecoration(color: panel, borderRadius: BorderRadius.circular(13)),
+              child: Row(children: [
+                const Icon(Icons.sports_soccer, color: lime, size: 15),
+                const SizedBox(width: 6),
+                Text('$_score', style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 17)),
+              ]),
+            ),
+          ]),
+        ),
+        _matchProgress(),
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 9, 12, 8),
+            child: _pitchView(),
+          ),
+        ),
+        _matchControls(),
+      ],
+    );
+  }
+
+  Widget _matchProgress() {
+    final total = _mode == GameMode.quick ? 5 : _mode == GameMode.training ? 10 : 3;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Row(children: List.generate(total, (i) {
+        final done = i < _attempts;
+        final active = i == _attempts;
+        final color = done ? (_goal ? lime : Colors.white.withOpacity(.25)) : active ? gold : Colors.white.withOpacity(.09);
+        return Expanded(child: Container(
+          height: 5,
+          margin: EdgeInsets.only(right: i == total - 1 ? 0 : 5),
+          decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(9)),
+        ));
+      })),
+    );
+  }
+
+  Widget _pitchView() {
+    return LayoutBuilder(builder: (context, constraints) {
+      final size = Size(constraints.maxWidth, constraints.maxHeight);
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onPanDown: (d) => _setAim(d.localPosition, size),
+        onPanUpdate: (d) => _setAim(d.localPosition, size),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(25),
+          child: Stack(fit: StackFit.expand, children: [
+            AnimatedBuilder(
+              animation: Listenable.merge([_shotAnimation, _pulseAnimation]),
+              builder: (context, _) => CustomPaint(
+                painter: ProPitchPainter(
+                  aim: _aim,
+                  keeperLane: _keeperLane,
+                  targetLane: _targetLane,
+                  shotTaken: _shotTaken,
+                  goal: _goal,
+                  saved: _saved,
+                  wide: _wide,
+                  progress: _shotAnimation.value,
+                  pulse: _pulseAnimation.value,
+                ),
+              ),
+            ),
+            Positioned(top: 13, left: 0, right: 0, child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
+                decoration: BoxDecoration(color: const Color(0xCC071019), borderRadius: BorderRadius.circular(30), border: Border.all(color: Colors.white.withOpacity(.08))),
+                child: Text(_commentary, style: TextStyle(color: _shotTaken ? (_goal ? lime : red) : Colors.white, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1.2)),
+              ),
+            )),
+            if (!_shotTaken)
+              Positioned(left: 13, right: 13, bottom: 15, child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                _pitchHint(Icons.swipe_rounded, 'DRAG TO AIM'),
+                _pitchHint(Icons.adjust_rounded, 'FIND THE CORNER'),
+              ])),
+            if (_shotTaken)
+              Positioned(bottom: 20, left: 0, right: 0, child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 17, vertical: 10),
+                  decoration: BoxDecoration(color: ink.withOpacity(.86), borderRadius: BorderRadius.circular(30), border: Border.all(color: (_goal ? lime : red).withOpacity(.35))),
+                  child: Text(_commentary, style: TextStyle(color: _goal ? lime : red, fontWeight: FontWeight.w900, letterSpacing: 1.3, fontSize: 12)),
+                ),
+              )),
+          ]),
+        ),
+      );
+    });
+  }
+
+  Widget _pitchHint(IconData icon, String label) => Row(children: [
+    Icon(icon, color: Colors.white.withOpacity(.65), size: 14),
+    const SizedBox(width: 5),
+    Text(label, style: TextStyle(color: Colors.white.withOpacity(.65), fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: .8)),
+  ]);
+
+  Widget _matchControls() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(19, 12, 19, 15),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0B1722),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        border: Border(top: BorderSide(color: Colors.white.withOpacity(.06))),
+      ),
+      child: Column(children: [
+        Row(children: [
+          const Text('SHOT POWER', style: TextStyle(color: muted, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1.2)),
+          const Spacer(),
+          Text('${(_power * 100).round()}%', style: const TextStyle(color: lime, fontSize: 12, fontWeight: FontWeight.w900)),
+        ]),
+        SliderTheme(
+          data: SliderTheme.of(context).copyWith(
+            activeTrackColor: lime,
+            inactiveTrackColor: panel2,
+            thumbColor: Colors.white,
+            overlayColor: lime.withOpacity(.12),
+            trackHeight: 5,
+            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
+          ),
+          child: Slider(
+            value: _power,
+            min: .1,
+            max: 1,
+            onChanged: _shotTaken ? null : (v) => setState(() => _power = v),
+          ),
+        ),
+        const SizedBox(height: 3),
+        SizedBox(
+          width: double.infinity,
+          height: 55,
+          child: FilledButton(
+            onPressed: _shotTaken ? null : _shoot,
+            style: FilledButton.styleFrom(
+              backgroundColor: lime,
+              disabledBackgroundColor: panel2,
+              foregroundColor: ink,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(17)),
+            ),
+            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              const Icon(Icons.sports_soccer_rounded, size: 20),
+              const SizedBox(width: 9),
+              Text(_shotTaken ? 'SHOT IN PLAY' : 'TAKE THE SHOT', style: const TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1.4, fontSize: 13)),
+            ]),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          const Icon(Icons.shield_outlined, color: muted, size: 12),
+          const SizedBox(width: 5),
+          Text('$_difficulty GOALKEEPER', style: const TextStyle(color: muted, fontSize: 8, letterSpacing: 1.1, fontWeight: FontWeight.w800)),
+          const SizedBox(width: 13),
+          const Icon(Icons.flag_rounded, color: muted, size: 12),
+          const SizedBox(width: 5),
+          Text(_mode == GameMode.quick ? 'KICK ${_attempts + (_shotTaken ? 0 : 1)} OF 5' : 'ATTEMPT ${_attempts + 1}', style: const TextStyle(color: muted, fontSize: 8, letterSpacing: 1.1, fontWeight: FontWeight.w800)),
+        ]),
+      ]),
+    );
+  }
+
+  Widget _resultScreen() {
+    final title = _mode == GameMode.quick
+        ? (_score >= 5 ? 'PERFECT FIVE!' : _score >= 4 ? 'ELITE FINISHER!' : _score >= 3 ? 'SOLID PERFORMANCE' : 'KEEP PRACTISING')
+        : _mode == GameMode.golden
+            ? (_score >= 3 ? 'GOLDEN GOAL!' : 'THE KEEPER WINS')
+            : 'TRAINING COMPLETE';
+    return Center(
+      key: const ValueKey('result'),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(23),
+        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Container(
+            width: 92, height: 92,
+            decoration: BoxDecoration(color: gold.withOpacity(.13), shape: BoxShape.circle, border: Border.all(color: gold.withOpacity(.35))),
+            child: const Icon(Icons.emoji_events_rounded, color: gold, size: 53),
+          ),
+          const SizedBox(height: 22),
+          const Text('FULL TIME', style: TextStyle(color: muted, fontWeight: FontWeight.w900, letterSpacing: 3, fontSize: 11)),
+          const SizedBox(height: 8),
+          Text(title, textAlign: TextAlign.center, style: const TextStyle(fontSize: 25, fontWeight: FontWeight.w900, letterSpacing: .6)),
+          const SizedBox(height: 9),
+          Text(_modeTitle, style: const TextStyle(color: muted, fontSize: 10, letterSpacing: 1.6)),
+          const SizedBox(height: 25),
+          Container(
+            padding: const EdgeInsets.all(21),
+            decoration: BoxDecoration(color: panel, borderRadius: BorderRadius.circular(23), border: Border.all(color: Colors.white.withOpacity(.06))),
+            child: Column(children: [
+              Text('$_score', style: const TextStyle(fontSize: 58, fontWeight: FontWeight.w900, color: lime, height: 1)),
+              const Text('GOALS SCORED', style: TextStyle(color: muted, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1.7)),
+              const SizedBox(height: 22),
+              Row(children: [
+                _resultStat('ATTEMPTS', '$_attempts'),
+                _resultStat('SAVES', '$_saves'),
+                _resultStat('BEST STREAK', '$_bestStreak'),
+              ]),
+            ]),
+          ),
+          const SizedBox(height: 15),
+          if (_score >= _bestScore)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
+              decoration: BoxDecoration(color: lime.withOpacity(.12), borderRadius: BorderRadius.circular(30)),
+              child: const Text('★  PERSONAL BEST UPDATED', style: TextStyle(color: lime, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1)),
+            ),
+          const SizedBox(height: 25),
+          SizedBox(width: double.infinity, height: 54, child: FilledButton.icon(
+            onPressed: () => _start(_mode),
+            icon: const Icon(Icons.replay_rounded),
+            label: const Text('PLAY AGAIN', style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1.2)),
+            style: FilledButton.styleFrom(backgroundColor: lime, foregroundColor: ink, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
+          )),
+          const SizedBox(height: 10),
+          SizedBox(width: double.infinity, height: 52, child: OutlinedButton.icon(
+            onPressed: _returnHome,
+            icon: const Icon(Icons.home_rounded),
+            label: const Text('BACK TO HOME', style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1)),
+            style: OutlinedButton.styleFrom(foregroundColor: Colors.white, side: BorderSide(color: Colors.white.withOpacity(.13)), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
+          )),
+        ]),
+      ),
+    );
+  }
+
+  Widget _resultStat(String label, String value) => Expanded(child: Column(children: [
+    Text(value, style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w900)),
+    const SizedBox(height: 4),
+    Text(label, textAlign: TextAlign.center, style: const TextStyle(color: muted, fontSize: 8, fontWeight: FontWeight.w800, letterSpacing: .6)),
+  ]));
+
+  Widget _settingsScreen() {
+    return Padding(
+      key: const ValueKey('settings'),
+      padding: const EdgeInsets.fromLTRB(20, 10, 20, 20),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          IconButton(onPressed: () => setState(() => _screen = Screen.home), icon: const Icon(Icons.arrow_back_rounded)),
+          const SizedBox(width: 7),
+          const Text('SETTINGS', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, letterSpacing: 1.3)),
+        ]),
+        const SizedBox(height: 20),
+        _settingsGroup('GAMEPLAY', [
+          _settingTile(Icons.speed_rounded, 'Goalkeeper difficulty', _difficulty, onTap: _cycleDifficulty),
+          _settingTile(Icons.school_rounded, 'How to play', 'View tutorial', onTap: _showTutorial),
+        ]),
+        const SizedBox(height: 15),
+        _settingsGroup('EXPERIENCE', [
+          SwitchListTile.adaptive(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 13),
+            secondary: const Icon(Icons.volume_up_rounded, color: lime),
+            title: const Text('Sound effects', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
+            subtitle: const Text('Game audio preferences', style: TextStyle(color: muted, fontSize: 10)),
+            value: _sound,
+            activeColor: lime,
+            onChanged: _toggleSound,
+          ),
+          SwitchListTile.adaptive(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 13),
+            secondary: const Icon(Icons.vibration_rounded, color: lime),
+            title: const Text('Haptic feedback', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
+            subtitle: const Text('Vibrate on shot outcomes', style: TextStyle(color: muted, fontSize: 10)),
+            value: _vibration,
+            activeColor: lime,
+            onChanged: _toggleVibration,
+          ),
+        ]),
+        const Spacer(),
+        const Center(child: Text('PENALTY KINGS  •  VERSION 3.0.0', style: TextStyle(color: muted, fontSize: 9, letterSpacing: 1.2))),
+      ]),
+    );
+  }
+
+  Widget _settingsGroup(String title, List<Widget> children) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Padding(padding: const EdgeInsets.only(left: 4, bottom: 8), child: Text(title, style: const TextStyle(color: muted, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1.5))),
+      Container(decoration: BoxDecoration(color: panel, borderRadius: BorderRadius.circular(18), border: Border.all(color: Colors.white.withOpacity(.05))), child: Column(children: children)),
+    ],
+  );
+
+  Widget _settingTile(IconData icon, String title, String value, {required VoidCallback onTap}) => ListTile(
+    leading: Icon(icon, color: lime),
+    title: Text(title, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
+    subtitle: Text(value, style: const TextStyle(color: muted, fontSize: 10)),
+    trailing: const Icon(Icons.chevron_right_rounded, color: muted),
+    onTap: onTap,
+  );
+
+  void _cycleDifficulty() {
+    setState(() => _difficulty = switch (_difficulty) {
+      'AMATEUR' => 'PRO',
+      'PRO' => 'WORLD CLASS',
+      _ => 'AMATEUR',
+    });
+  }
+
+  Future<void> _confirmExit() async {
+    final exit = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: panel,
+        title: const Text('Leave shootout?'),
+        content: const Text('Your current match progress will be lost.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('KEEP PLAYING')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), style: FilledButton.styleFrom(backgroundColor: lime, foregroundColor: ink), child: const Text('LEAVE')),
+        ],
+      ),
+    );
+    if (exit == true) _returnHome();
+  }
+}
+
+class _TutorialLine extends StatelessWidget {
+  final IconData icon;
+  final String text;
+  const _TutorialLine({required this.icon, required this.text});
+  @override
+  Widget build(BuildContext context) => Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    Icon(icon, color: lime, size: 19),
+    const SizedBox(width: 11),
+    Expanded(child: Text(text, style: const TextStyle(color: Color(0xFFD6E0E8), fontSize: 12, height: 1.4))),
+  ]);
+}
+
+class StadiumBackdropPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final glow = Paint()..shader = RadialGradient(colors: [lime.withOpacity(.12), Colors.transparent]).createShader(Rect.fromCircle(center: Offset(size.width * .72, size.height * .42), radius: size.width * .62));
+    canvas.drawRect(Offset.zero & size, glow);
+    final crowd = Paint()..color = Colors.white.withOpacity(.09);
+    for (int row = 0; row < 3; row++) {
+      for (int i = 0; i < 28; i++) {
+        final x = size.width * i / 27;
+        final y = size.height * (.18 + row * .055);
+        canvas.drawCircle(Offset(x, y), 1.4 + (i % 3) * .35, crowd);
+      }
+    }
+    final rays = Paint()..color = Colors.white.withOpacity(.12)..strokeWidth = 1;
+    for (int i = 0; i < 5; i++) {
+      final x = size.width * (.08 + i * .2);
+      canvas.drawLine(Offset(x, 0), Offset(x + 25, size.height * .45), rays);
+    }
+  }
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class ProPitchPainter extends CustomPainter {
+  final Offset aim;
+  final int keeperLane;
+  final int targetLane;
+  final bool shotTaken;
+  final bool goal;
+  final bool saved;
+  final bool wide;
+  final double progress;
+  final double pulse;
+
+  ProPitchPainter({
+    required this.aim,
+    required this.keeperLane,
+    required this.targetLane,
+    required this.shotTaken,
+    required this.goal,
+    required this.saved,
+    required this.wide,
+    required this.progress,
+    required this.pulse,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final bounds = Offset.zero & size;
+    canvas.drawRect(bounds, Paint()..shader = const LinearGradient(
+      begin: Alignment.topCenter, end: Alignment.bottomCenter,
+      colors: [Color(0xFF142C39), Color(0xFF173E36), Color(0xFF0B2925), Color(0xFF0D241F)],
+      stops: [0, .28, .62, 1],
+    ).createShader(bounds));
+
+    _drawStadium(canvas, size);
+    _drawPitch(canvas, size);
+    final goalRect = Rect.fromLTWH(size.width * .105, size.height * .155, size.width * .79, size.height * .31);
+    _drawGoal(canvas, goalRect);
+    _drawKeeper(canvas, size, goalRect);
+    _drawAimAndBall(canvas, size);
+  }
+
+  void _drawStadium(Canvas canvas, Size size) {
+    final light = Paint()..maskFilter = const MaskFilter.blur(BlurStyle.normal, 18)..color = Colors.white.withOpacity(.25);
+    for (int i = 0; i < 4; i++) {
+      final x = size.width * (i.isEven ? .08 : .92);
+      final y = size.height * (.07 + (i ~/ 2) * .025);
+      canvas.drawCircle(Offset(x, y), 8, light);
+      final dots = Paint()..color = Colors.white.withOpacity(.65);
+      for (int j = 0; j < 5; j++) {
+        canvas.drawCircle(Offset(x - 12 + j * 6, y), 1.4, dots);
+      }
+    }
+    final crowd = Paint()..color = const Color(0xFF9FB9B2).withOpacity(.12);
+    for (int row = 0; row < 4; row++) {
+      for (int i = 0; i < 42; i++) {
+        canvas.drawCircle(Offset(size.width * i / 41, size.height * (.08 + row * .018)), 1.2, crowd);
+      }
+    }
+    final dark = Paint()..color = Colors.black.withOpacity(.22);
+    canvas.drawRect(Rect.fromLTWH(0, size.height * .39, size.width, size.height * .12), dark);
+  }
+
+  void _drawPitch(Canvas canvas, Size size) {
+    final field = Rect.fromLTWH(size.width * .035, size.height * .39, size.width * .93, size.height * .61);
+    final grass = Paint()..shader = const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFF1B5A42), Color(0xFF0C392C)]).createShader(field);
+    canvas.drawRect(field, grass);
+    for (int i = 0; i < 7; i++) {
+      if (i.isEven) {
+        canvas.drawRect(Rect.fromLTWH(field.left, field.top + field.height * i / 7, field.width, field.height / 7), Paint()..color = Colors.white.withOpacity(.025));
+      }
+    }
+    final line = Paint()..color = Colors.white.withOpacity(.24)..style = PaintingStyle.stroke..strokeWidth = 1.5;
+    canvas.drawRect(Rect.fromLTWH(size.width * .07, size.height * .41, size.width * .86, size.height * .57), line);
+    canvas.drawCircle(Offset(size.width * .5, size.height * .74), size.width * .18, line);
+    canvas.drawCircle(Offset(size.width * .5, size.height * .74), 2.5, Paint()..color = Colors.white.withOpacity(.55));
+    canvas.drawRect(Rect.fromLTWH(size.width * .18, size.height * .41, size.width * .64, size.height * .27), line);
+    canvas.drawRect(Rect.fromLTWH(size.width * .33, size.height * .41, size.width * .34, size.height * .12), line);
+  }
+
+  void _drawGoal(Canvas canvas, Rect goal) {
+    final shadow = Paint()..color = Colors.black.withOpacity(.28)..maskFilter = const MaskFilter.blur(BlurStyle.normal, 13);
+    canvas.drawRect(goal.shift(const Offset(0, 6)), shadow);
+    final net = Paint()..color = const Color(0xFFDCE8E7).withOpacity(.32)..strokeWidth = 1;
+    for (int i = 0; i <= 12; i++) {
+      final x = goal.left + goal.width * i / 12;
+      canvas.drawLine(Offset(x, goal.top), Offset(x, goal.bottom), net);
+    }
+    for (int i = 0; i <= 7; i++) {
+      final y = goal.top + goal.height * i / 7;
+      canvas.drawLine(Offset(goal.left, y), Offset(goal.right, y), net);
+    }
+    final frame = Paint()..color = const Color(0xFFF3F7F5)..style = PaintingStyle.stroke..strokeWidth = 7..strokeJoin = StrokeJoin.round;
+    canvas.drawRect(goal, frame);
+    final inner = Paint()..color = Colors.white.withOpacity(.35)..style = PaintingStyle.stroke..strokeWidth = 1.2;
+    canvas.drawRect(goal.deflate(5), inner);
+  }
+
+  void _drawKeeper(Canvas canvas, Size size, Rect goalRect) {
+    final lane = shotTaken ? keeperLane : 1;
+    final centerX = goalRect.left + goalRect.width * (lane + .5) / 3;
+    final baseY = goalRect.top + goalRect.height * .77;
+    final dive = shotTaken ? (targetLane - keeperLane).toDouble() * progress * 36 : 0.0;
+    final x = centerX + dive;
+    final y = baseY - (shotTaken && keeperLane == targetLane ? math.sin(progress * math.pi) * 12 : 0);
+    final bodyColor = const Color(0xFFFFB83F);
+    final body = Paint()..color = bodyColor;
+    final outline = Paint()..color = const Color(0xFF1B2931)..strokeWidth = 7..strokeCap = StrokeCap.round;
+    final skin = Paint()..color = const Color(0xFFC98C68);
+    canvas.drawCircle(Offset(x, y - 25), 10, skin);
+    canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromCenter(center: Offset(x, y + 3), width: 25, height: 39), const Radius.circular(8)), body);
+    canvas.drawLine(Offset(x - 8, y - 4), Offset(x - 25 - dive.sign * 8, y + 4), body..strokeWidth = 8..strokeCap = StrokeCap.round);
+    canvas.drawLine(Offset(x + 8, y - 4), Offset(x + 25 + dive.sign * 8, y + 4), body..strokeWidth = 8..strokeCap = StrokeCap.round);
+    canvas.drawCircle(Offset(x - 28 - (dive < 0 ? -1.0 : dive > 0 ? 1.0 : 0.0) * 8, y + 4), 6, Paint()..color = const Color(0xFFF2F5F4));
+    canvas.drawCircle(Offset(x + 28 + (dive < 0 ? -1.0 : dive > 0 ? 1.0 : 0.0) * 8, y + 4), 6, Paint()..color = const Color(0xFFF2F5F4));
+    canvas.drawLine(Offset(x - 7, y + 19), Offset(x - 12, y + 39), outline);
+    canvas.drawLine(Offset(x + 7, y + 19), Offset(x + 12, y + 39), outline);
+  }
+
+  void _drawAimAndBall(Canvas canvas, Size size) {
+    final start = Offset(size.width * .5, size.height * .84);
+    final target = Offset(size.width * (.5 + aim.dx * .34), size.height * (.29 + aim.dy * .13));
+    if (!shotTaken) {
+      final line = Paint()..color = lime.withOpacity(.75)..strokeWidth = 2..style = PaintingStyle.stroke;
+      final path = Path()..moveTo(start.dx, start.dy)..quadraticBezierTo(size.width * .5, size.height * .55, target.dx, target.dy);
+      canvas.drawPath(path, line);
+      final ring = Paint()..color = lime.withOpacity(.18 + pulse * .15)..style = PaintingStyle.fill;
+      canvas.drawCircle(target, 17 + pulse * 3, ring);
+      canvas.drawCircle(target, 10, Paint()..color = lime..style = PaintingStyle.stroke..strokeWidth = 2);
+      canvas.drawCircle(target, 3, Paint()..color = lime);
+    }
+    final end = shotTaken
+        ? Offset(
+            start.dx + (target.dx - start.dx) * Curves.easeOutCubic.transform(progress),
+            start.dy + (target.dy - start.dy) * Curves.easeOutCubic.transform(progress),
+          )
+        : start;
+    final radius = shotTaken ? 13.0 - progress * 5.0 : 13.0;
+    canvas.drawCircle(end + const Offset(2, 4), radius + 2, Paint()..color = Colors.black.withOpacity(.3));
+    canvas.drawCircle(end, radius, Paint()..shader = const RadialGradient(colors: [Colors.white, Color(0xFFBBC8CE), Color(0xFF657780)]).createShader(Rect.fromCircle(center: end, radius: radius)));
+    final seams = Paint()..color = const Color(0xFF1D2A31)..strokeWidth = 1.2..style = PaintingStyle.stroke;
+    canvas.drawCircle(end, radius * .42, seams);
+    canvas.drawLine(end + Offset(-radius * .7, 0), end + Offset(radius * .7, 0), seams);
+    canvas.drawLine(end + Offset(0, -radius * .7), end + Offset(0, radius * .7), seams);
+  }
+
+  @override
+  bool shouldRepaint(covariant ProPitchPainter old) =>
+      old.aim != aim ||
+      old.keeperLane != keeperLane ||
+      old.targetLane != targetLane ||
+      old.shotTaken != shotTaken ||
+      old.goal != goal ||
+      old.saved != saved ||
+      old.wide != wide ||
+      old.progress != progress ||
+      old.pulse != pulse;
+}
