@@ -1,4 +1,4 @@
-# Penalty Kings — Version 3.2.0
+# Penalty Kings — Version 3.3.0
 
 A polished, offline-first football penalty shootout game built with Flutter.
 
@@ -15,6 +15,8 @@ A polished, offline-first football penalty shootout game built with Flutter.
 - Goalkeeper difficulty is saved between sessions.
 - **King’s Cup:** a three-round knockout tournament against CPU opponents, with a trophy-winning final.
 - **Local leaderboard:** your five highest quick-shootout and tournament scores are saved on the device.
+- **Club and national team selection:** choose your favourite side and opponent from 20 clubs or 20 national teams, including Nigeria, Egypt, England, Brazil, Argentina and more.
+- **Saved team preferences:** your selected side and opponent are remembered on the device and shown on match and result screens.
 - **Keeper kits:** choose from four goalkeeper kit colours; your choice persists between sessions.
 
 ## Career system
