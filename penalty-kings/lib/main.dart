@@ -83,7 +83,12 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
   int _saves = 0;
   int _round = 1;
   int _keeperLane = 1;
+  int _keeperVertical = 1;
   int _targetLane = 1;
+  final List<int> _shotHistory = <int>[];
+  int _matchBestStreak = 0;
+  int _previousBestScore = 0;
+  bool _newRecord = false;
   double _power = .72;
   Offset _aim = const Offset(.0, -.68);
   bool _shotTaken = false;
@@ -121,6 +126,7 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
     if (!mounted) return;
     setState(() {
       _bestScore = prefs.getInt('best_score') ?? 0;
+      _difficulty = prefs.getString('difficulty') ?? 'PRO';
       _bestStreak = prefs.getInt('best_streak') ?? 0;
       _careerShots = prefs.getInt('career_shots') ?? 0;
       _careerGoals = prefs.getInt('career_goals') ?? 0;
@@ -135,6 +141,7 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
   Future<void> _saveStats() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('best_score', _bestScore);
+    await prefs.setString('difficulty', _difficulty);
     await prefs.setInt('best_streak', _bestStreak);
     await prefs.setInt('career_shots', _careerShots);
     await prefs.setInt('career_goals', _careerGoals);
@@ -159,6 +166,10 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
       _mode = mode;
       _score = 0;
       _attempts = 0;
+      _shotHistory.clear();
+      _matchBestStreak = 0;
+      _previousBestScore = _bestScore;
+      _newRecord = false;
       _streak = 0;
       _saves = 0;
       _round = 1;
@@ -238,9 +249,10 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
     final keeperMatches = lane == keeperRead && vertical == keeperHeightRead;
     final lowPowerMiss = _power < .18;
     final overhit = _power > .97 && _random.nextDouble() < .22;
-    final keeperSave = keeperMatches &&
-        _random.nextDouble() < difficultyFactor + (_power < .38 ? .12 : 0);
-    final isWide = lowPowerMiss || overhit || _random.nextDouble() < .035;
+    final powerAdvantage = ((_power - .5) * .12).clamp(-.06, .06);
+    final keeperSaveChance = (difficultyFactor - powerAdvantage + (_power < .38 ? .12 : 0)).clamp(.15, .82);
+    final keeperSave = keeperMatches && _random.nextDouble() < keeperSaveChance;
+    final isWide = lowPowerMiss || overhit || _random.nextDouble() < .025;
     final isGoal = !keeperSave && !isWide;
 
     setState(() {
@@ -251,7 +263,9 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
       if (isGoal) _careerGoals++;
       if (keeperSave) _careerSaves++;
       _keeperLane = keeperRead;
+      _keeperVertical = keeperHeightRead;
       _targetLane = lane;
+      _shotHistory.add(isGoal ? 1 : keeperSave ? 2 : 3);
       _goal = isGoal;
       _saved = keeperSave;
       _wide = isWide;
@@ -269,6 +283,8 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
       }
       if (_score > _bestScore) _bestScore = _score;
       if (_streak > _bestStreak) _bestStreak = _streak;
+      if (_streak > _matchBestStreak) _matchBestStreak = _streak;
+      if (_score > _previousBestScore) _newRecord = true;
     });
 
     if (_vibration) {
@@ -707,9 +723,11 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: Row(children: List.generate(total, (i) {
-        final done = i < _attempts;
+        final done = i < _shotHistory.length;
         final active = i == _attempts;
-        final color = done ? (_goal ? lime : Colors.white.withOpacity(.25)) : active ? gold : Colors.white.withOpacity(.09);
+        final color = done
+            ? (_shotHistory[i] == 1 ? lime : _shotHistory[i] == 2 ? red : gold.withOpacity(.75))
+            : active ? gold : Colors.white.withOpacity(.09);
         return Expanded(child: Container(
           height: 5,
           margin: EdgeInsets.only(right: i == total - 1 ? 0 : 5),
@@ -735,6 +753,7 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
                 painter: ProPitchPainter(
                   aim: _aim,
                   keeperLane: _keeperLane,
+                  keeperVertical: _keeperVertical,
                   targetLane: _targetLane,
                   shotTaken: _shotTaken,
                   goal: _goal,
@@ -873,12 +892,12 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
               Row(children: [
                 _resultStat('ATTEMPTS', '$_attempts'),
                 _resultStat('SAVES', '$_saves'),
-                _resultStat('BEST STREAK', '$_bestStreak'),
+                _resultStat('BEST STREAK', '$_matchBestStreak'),
               ]),
             ]),
           ),
           const SizedBox(height: 15),
-          if (_score >= _bestScore)
+          if (_newRecord)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
               decoration: BoxDecoration(color: lime.withOpacity(.12), borderRadius: BorderRadius.circular(30)),
@@ -973,6 +992,7 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
       'PRO' => 'WORLD CLASS',
       _ => 'AMATEUR',
     });
+    _saveStats();
   }
 
   Future<void> _confirmExit() async {
@@ -1030,6 +1050,7 @@ class StadiumBackdropPainter extends CustomPainter {
 class ProPitchPainter extends CustomPainter {
   final Offset aim;
   final int keeperLane;
+  final int keeperVertical;
   final int targetLane;
   final bool shotTaken;
   final bool goal;
@@ -1041,6 +1062,7 @@ class ProPitchPainter extends CustomPainter {
   ProPitchPainter({
     required this.aim,
     required this.keeperLane,
+    required this.keeperVertical,
     required this.targetLane,
     required this.shotTaken,
     required this.goal,
@@ -1126,7 +1148,8 @@ class ProPitchPainter extends CustomPainter {
   void _drawKeeper(Canvas canvas, Size size, Rect goalRect) {
     final lane = shotTaken ? keeperLane : 1;
     final centerX = goalRect.left + goalRect.width * (lane + .5) / 3;
-    final baseY = goalRect.top + goalRect.height * .77;
+    final keeperHeight = shotTaken ? (keeperVertical == 0 ? .32 : keeperVertical == 1 ? .64 : .84) : .77;
+    final baseY = goalRect.top + goalRect.height * keeperHeight;
     final dive = shotTaken ? (targetLane - keeperLane).toDouble() * progress * 36 : 0.0;
     final x = centerX + dive;
     final y = baseY - (shotTaken && keeperLane == targetLane ? math.sin(progress * math.pi) * 12 : 0);
@@ -1175,6 +1198,7 @@ class ProPitchPainter extends CustomPainter {
   bool shouldRepaint(covariant ProPitchPainter old) =>
       old.aim != aim ||
       old.keeperLane != keeperLane ||
+      old.keeperVertical != keeperVertical ||
       old.targetLane != targetLane ||
       old.shotTaken != shotTaken ||
       old.goal != goal ||
