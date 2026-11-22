@@ -1,8 +1,9 @@
-import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'game/shootout_game.dart';
 
 const ink = Color(0xFF071019);
 const panel = Color(0xFF101D2A);
@@ -116,10 +117,8 @@ class KingsShell extends StatefulWidget {
   State<KingsShell> createState() => _KingsShellState();
 }
 
-class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
+class _KingsShellState extends State<KingsShell> {
   final math.Random _random = math.Random();
-  late final AnimationController _shotAnimation;
-  late final AnimationController _pulseAnimation;
   Screen _screen = Screen.home;
   GameMode _mode = GameMode.quick;
   String _difficulty = 'PRO';
@@ -131,58 +130,48 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
   TeamOption _selectedOpponent = clubTeams[3];
   final List<String> _leaderboard = <String>[];
   int _tournamentRound = 1;
-  int _opponentScore = 0;
-  String _opponentName = 'NORTH CITY';
+  List<TeamOption> _cupOpponents = <TeamOption>[];
   int _bestScore = 0;
   int _bestStreak = 0;
   int _careerShots = 0;
   int _careerGoals = 0;
   int _careerSaves = 0;
+  int _careerWins = 0;
+  int _cupsWon = 0;
   int _matchesPlayed = 0;
-  int _score = 0;
-  int _attempts = 0;
-  int _streak = 0;
-  int _saves = 0;
-  int _round = 1;
-  int _keeperLane = 1;
-  int _keeperVertical = 1;
-  int _targetLane = 1;
-  final List<int> _shotHistory = <int>[];
-  int _matchBestStreak = 0;
-  int _previousBestScore = 0;
+  int _matchSeed = 0;
   bool _newRecord = false;
-  double _power = .72;
-  Offset _aim = const Offset(.0, -.68);
-  Offset _joystick = Offset.zero;
-  bool _shotTaken = false;
-  bool _goal = false;
-  bool _saved = false;
-  bool _wide = false;
-  bool _isResolving = false;
-  String _commentary = 'PICK YOUR CORNER';
-  Timer? _nextShotTimer;
+  MatchResult _lastResult = const MatchResult(
+    goals: 0, oppGoals: 0, attempts: 0, oppAttempts: 0, saves: 0, bestStreak: 0, won: false,
+  );
 
-  int get _maxShots => (_mode == GameMode.quick || _mode == GameMode.tournament) ? 5 : 999;
-  bool get _finished => (_mode == GameMode.quick || _mode == GameMode.tournament) && _attempts >= _maxShots;
+  static const List<String> _cupRoundNames = <String>['QUARTER-FINAL', 'SEMI-FINAL', 'FINAL'];
+
   Color get _keeperKitColor => keeperKits[_keeperKitIndex.clamp(0, keeperKits.length - 1).toInt()];
   String get _modeTitle => switch (_mode) {
         GameMode.quick => 'QUICK SHOOTOUT',
-        GameMode.golden => 'GOLDEN GOAL',
+        GameMode.golden => 'SUDDEN DEATH',
         GameMode.training => 'TRAINING GROUND',
         GameMode.tournament => 'KING’S CUP TOURNAMENT',
       };
 
+  TeamOption get _currentOpponent =>
+      _mode == GameMode.tournament && _cupOpponents.length >= _tournamentRound
+          ? _cupOpponents[_tournamentRound - 1]
+          : _selectedOpponent;
+
+  // King's Cup gets harder every round.
+  String get _matchDifficulty {
+    if (_mode != GameMode.tournament) return _difficulty;
+    const levels = <String>['AMATEUR', 'PRO', 'WORLD CLASS'];
+    final base = levels.indexOf(_difficulty);
+    final idx = math.min(2, (base < 0 ? 1 : base) + (_tournamentRound - 1));
+    return levels[idx];
+  }
+
   @override
   void initState() {
     super.initState();
-    _shotAnimation = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 760),
-    );
-    _pulseAnimation = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1150),
-    )..repeat(reverse: true);
     _loadStats();
   }
 
@@ -197,6 +186,8 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
       _careerGoals = prefs.getInt('career_goals') ?? 0;
       _careerSaves = prefs.getInt('career_saves') ?? 0;
       _matchesPlayed = prefs.getInt('matches_played') ?? 0;
+      _careerWins = prefs.getInt('career_wins') ?? 0;
+      _cupsWon = prefs.getInt('cups_won') ?? 0;
       _sound = prefs.getBool('sound') ?? true;
       _vibration = prefs.getBool('vibration') ?? true;
       _tutorialSeen = prefs.getBool('tutorial_seen') ?? false;
@@ -218,6 +209,8 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
     await prefs.setInt('career_goals', _careerGoals);
     await prefs.setInt('career_saves', _careerSaves);
     await prefs.setInt('matches_played', _matchesPlayed);
+    await prefs.setInt('career_wins', _careerWins);
+    await prefs.setInt('cups_won', _cupsWon);
     await prefs.setBool('sound', _sound);
     await prefs.setBool('vibration', _vibration);
     await prefs.setBool('tutorial_seen', _tutorialSeen);
@@ -226,15 +219,6 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
     await prefs.setString('selected_opponent', _selectedOpponent.id);
     await prefs.setStringList('local_leaderboard', _leaderboard);
   }
-
-  @override
-  void dispose() {
-    _nextShotTimer?.cancel();
-    _shotAnimation.dispose();
-    _pulseAnimation.dispose();
-    super.dispose();
-  }
-
 
   Future<void> _chooseTeamsAndStart(GameMode? mode) async {
     var national = nationalTeams.any((t) => t.id == _selectedTeam.id);
@@ -338,33 +322,22 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
       ]))),
   );
 
+  List<TeamOption> _buildCupOpponents() {
+    final pool = nationalTeams.any((t) => t.id == _selectedTeam.id) ? nationalTeams : clubTeams;
+    final others = pool.where((t) => t.id != _selectedTeam.id && t.id != _selectedOpponent.id).toList()
+      ..shuffle(_random);
+    return <TeamOption>[_selectedOpponent, others[0], others[1]];
+  }
+
   void _start(GameMode mode) {
-    _nextShotTimer?.cancel();
     setState(() {
       _mode = mode;
       _tournamentRound = 1;
-      _opponentName = _selectedOpponent.name;
-      _opponentScore = mode == GameMode.tournament ? _random.nextInt(6) : 0;
-      _score = 0;
-      _attempts = 0;
-      _shotHistory.clear();
-      _matchBestStreak = 0;
-      _previousBestScore = _bestScore;
+      if (mode == GameMode.tournament) _cupOpponents = _buildCupOpponents();
+      _matchSeed++;
       _newRecord = false;
-      _streak = 0;
-      _saves = 0;
-      _round = 1;
-      _shotTaken = false;
-      _goal = false;
-      _saved = false;
-      _wide = false;
-      _isResolving = false;
-      _power = .72;
-      _aim = const Offset(0, -.35);
-      _commentary = 'PICK YOUR CORNER';
       _screen = Screen.match;
     });
-    _shotAnimation.reset();
     if (!_tutorialSeen) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && _screen == Screen.match) _showTutorial();
@@ -378,20 +351,24 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
       builder: (context) => AlertDialog(
         backgroundColor: panel,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        title: const Text('HOW TO TAKE THE PERFECT PENALTY',
+        title: const Text('HOW TO WIN A SHOOTOUT',
             style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
-        content: const Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _TutorialLine(icon: Icons.gamepad_rounded, text: 'Use the left virtual joystick to aim at a corner.'),
-            SizedBox(height: 12),
-            _TutorialLine(icon: Icons.bolt_rounded, text: 'Set your shot power with the power bar.'),
-            SizedBox(height: 12),
-            _TutorialLine(icon: Icons.sports_soccer_rounded, text: 'Tap SHOOT. The goalkeeper will try to read your shot.'),
-            SizedBox(height: 12),
-            _TutorialLine(icon: Icons.emoji_events_rounded, text: 'Score, build streaks and beat your personal best.'),
-          ],
+        content: const SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _TutorialLine(icon: Icons.swipe_up_rounded, text: 'Swipe up from the ball to shoot. Swipe sideways to pick a corner, and swipe further for a higher shot.'),
+              SizedBox(height: 12),
+              _TutorialLine(icon: Icons.bolt_rounded, text: 'Flick quickly for power. Slow swipes are weaker; over-hit it and it can sail over the bar.'),
+              SizedBox(height: 12),
+              _TutorialLine(icon: Icons.gesture_rounded, text: 'Curve your swipe to bend the ball and make the keeper’s read harder.'),
+              SizedBox(height: 12),
+              _TutorialLine(icon: Icons.pan_tool_alt_rounded, text: 'When they shoot, you are the keeper: swipe or tap a goal zone to dive. Early is better than late.'),
+              SizedBox(height: 12),
+              _TutorialLine(icon: Icons.emoji_events_rounded, text: 'Five kicks each, then sudden death. Out-score the CPU to win.'),
+            ],
+          ),
         ),
         actions: [
           FilledButton(
@@ -408,134 +385,30 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
     );
   }
 
-  void _setAim(Offset local, Size size) {
-    if (_shotTaken || _isResolving) return;
-    final x = ((local.dx / size.width) * 2 - 1).clamp(-.92, .92);
-    final y = ((local.dy / size.height) * 2 - 1).clamp(-.92, .28);
-    setState(() => _aim = Offset(x.toDouble(), y.toDouble()));
-  }
-
-  void _moveAimJoystick(Offset local) {
-    if (_shotTaken || _isResolving) return;
-    const center = 44.0;
-    const radius = 31.0;
-    var delta = local - const Offset(center, center);
-    if (delta.distance > radius) {
-      delta = Offset.fromDirection(delta.direction, radius);
-    }
-    setState(() {
-      _joystick = delta / radius;
-      _aim = Offset(
-        _joystick.dx.clamp(-.92, .92).toDouble(),
-        (-.35 + _joystick.dy * .55).clamp(-.92, .28).toDouble(),
-      );
-    });
-  }
-
-  void _releaseAimJoystick() {
+  void _onMatchFinished(MatchResult r) {
     if (!mounted) return;
-    setState(() => _joystick = Offset.zero);
-  }
-
-  void _shoot() {
-    if (_shotTaken || _isResolving) return;
-    FocusManager.instance.primaryFocus?.unfocus();
-    final lane = _aim.dx < -.29 ? 0 : (_aim.dx > .29 ? 2 : 1);
-    final vertical = _aim.dy < -.58 ? 0 : (_aim.dy > -.12 ? 2 : 1);
-    final keeperRead = _random.nextInt(3);
-    final keeperHeightRead = _random.nextInt(3);
-    final difficultyFactor = switch (_difficulty) {
-      'AMATEUR' => .36,
-      'WORLD CLASS' => .59,
-      _ => .48,
-    };
-    final keeperMatches = lane == keeperRead && vertical == keeperHeightRead;
-    final lowPowerMiss = _power < .18;
-    final overhit = _power > .97 && _random.nextDouble() < .22;
-    final powerAdvantage = ((_power - .5) * .12).clamp(-.06, .06);
-    final keeperSaveChance = (difficultyFactor - powerAdvantage + (_power < .38 ? .12 : 0)).clamp(.15, .82);
-    final keeperSave = keeperMatches && _random.nextDouble() < keeperSaveChance;
-    final isWide = lowPowerMiss || overhit || _random.nextDouble() < .025;
-    final isGoal = !keeperSave && !isWide;
-
     setState(() {
-      _shotTaken = true;
-      _isResolving = true;
-      _attempts++;
-      _careerShots++;
-      if (isGoal) _careerGoals++;
-      if (keeperSave) _careerSaves++;
-      _keeperLane = keeperRead;
-      _keeperVertical = keeperHeightRead;
-      _targetLane = lane;
-      _shotHistory.add(isGoal ? 1 : keeperSave ? 2 : 3);
-      _goal = isGoal;
-      _saved = keeperSave;
-      _wide = isWide;
-      if (isGoal) {
-        _score++;
-        _streak++;
-        _commentary = _streak >= 3 ? 'ICE IN YOUR VEINS!' : 'WHAT A FINISH!';
-      } else if (keeperSave) {
-        _saves++;
-        _streak = 0;
-        _commentary = 'THE KEEPER READ IT!';
-      } else {
-        _streak = 0;
-        _commentary = 'JUST OFF TARGET!';
-      }
-      if (_score > _bestScore) _bestScore = _score;
-      if (_streak > _bestStreak) _bestStreak = _streak;
-      if (_streak > _matchBestStreak) _matchBestStreak = _streak;
-      if (_score > _previousBestScore) _newRecord = true;
-    });
-
-    if (_vibration) {
-      if (isGoal) {
-        HapticFeedback.mediumImpact();
-      } else {
-        HapticFeedback.lightImpact();
-      }
-    }
-    _saveStats();
-    _shotAnimation.forward(from: 0).whenComplete(() {
-      if (!mounted) return;
-      _nextShotTimer = Timer(const Duration(milliseconds: 1450), _advanceAfterShot);
-    });
-  }
-
-  void _advanceAfterShot() {
-    if (!mounted) return;
-    final goldenFinished = _mode == GameMode.golden && (_score >= 3 || _saves >= 3);
-    final trainingFinished = _mode == GameMode.training && _attempts >= 10;
-    if (_finished || goldenFinished || trainingFinished) {
+      _lastResult = r;
       _matchesPlayed++;
-      _recordLeaderboard();
-      _saveStats();
-      setState(() {
-        _isResolving = false;
-        _screen = Screen.result;
-      });
-      return;
-    }
-    setState(() {
-      _round++;
-      _shotTaken = false;
-      _isResolving = false;
-      _goal = false;
-      _saved = false;
-      _wide = false;
-      _aim = const Offset(0, -.68);
-      _power = .72;
-      _commentary = 'PICK YOUR CORNER';
+      _careerShots += r.attempts;
+      _careerGoals += r.goals;
+      _careerSaves += r.saves;
+      _newRecord = r.goals > _bestScore;
+      if (_newRecord) _bestScore = r.goals;
+      if (r.bestStreak > _bestStreak) _bestStreak = r.bestStreak;
+      if (_mode != GameMode.training && r.won) _careerWins++;
+      if (_mode == GameMode.tournament && r.won && _tournamentRound == 3) _cupsWon++;
+      _recordLeaderboard(r);
+      _screen = Screen.result;
     });
-    _shotAnimation.reset();
+    _saveStats();
   }
 
-  void _recordLeaderboard() {
+  void _recordLeaderboard(MatchResult r) {
     if (_mode == GameMode.training || _mode == GameMode.golden) return;
-    final entry = '$_score|$_attempts|${_mode == GameMode.tournament ? 'KING’S CUP R$_tournamentRound' : 'QUICK SHOOTOUT'}';
-    _leaderboard.add(entry);
+    final label = (_mode == GameMode.tournament ? 'KING’S CUP R$_tournamentRound' : 'QUICK SHOOTOUT') +
+        (r.won ? ' • WIN' : ' • LOSS');
+    _leaderboard.add('${r.goals}|${r.attempts}|$label');
     _leaderboard.sort((a, b) {
       final aScore = int.tryParse(a.split('|').first) ?? 0;
       final bScore = int.tryParse(b.split('|').first) ?? 0;
@@ -545,28 +418,13 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
   }
 
   void _startNextTournamentRound() {
-    if (_tournamentRound >= 3 || _score <= _opponentScore) return;
+    if (_tournamentRound >= 3 || !_lastResult.won) return;
     setState(() {
       _tournamentRound++;
-      _opponentName = _selectedOpponent.name;
-      _opponentScore = _random.nextInt(6);
-      _score = 0;
-      _attempts = 0;
-      _saves = 0;
-      _streak = 0;
-      _matchBestStreak = 0;
-      _shotHistory.clear();
-      _shotTaken = false;
-      _goal = false;
-      _saved = false;
-      _wide = false;
-      _isResolving = false;
-      _aim = const Offset(0, -.68);
-      _power = .72;
-      _commentary = 'CUP SEMI-FINAL • PICK YOUR CORNER';
+      _matchSeed++;
+      _newRecord = false;
       _screen = Screen.match;
     });
-    _shotAnimation.reset();
   }
 
   void _cycleKeeperKit() {
@@ -575,7 +433,6 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
   }
 
   void _returnHome() {
-    _nextShotTimer?.cancel();
     setState(() => _screen = Screen.home);
   }
 
@@ -659,7 +516,7 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
               _modeCard(
                 icon: Icons.bolt_rounded,
                 title: 'QUICK SHOOTOUT',
-                subtitle: '5 penalties • Beat your best score',
+                subtitle: '5 kicks each • Shoot, then save • Win on penalties',
                 tag: 'CLASSIC',
                 onTap: () => _chooseTeamsAndStart(GameMode.quick),
                 accent: lime,
@@ -667,8 +524,8 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
               const SizedBox(height: 10),
               _modeCard(
                 icon: Icons.workspace_premium_rounded,
-                title: 'GOLDEN GOAL',
-                subtitle: 'First to 3 goals wins the shootout',
+                title: 'SUDDEN DEATH',
+                subtitle: 'Sudden death • One miss can end it',
                 tag: 'SUDDEN DEATH',
                 onTap: () => _chooseTeamsAndStart(GameMode.golden),
                 accent: gold,
@@ -677,7 +534,7 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
               _modeCard(
                 icon: Icons.emoji_events_rounded,
                 title: 'KING’S CUP',
-                subtitle: '3-round knockout • Win the trophy',
+                subtitle: 'Quarter • Semi • Final • Win the trophy',
                 tag: 'TOURNAMENT',
                 onTap: () => _chooseTeamsAndStart(GameMode.tournament),
                 accent: gold,
@@ -686,7 +543,7 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
               _modeCard(
                 icon: Icons.sports_soccer_rounded,
                 title: 'TRAINING GROUND',
-                subtitle: '10 attempts • Sharpen your accuracy',
+                subtitle: '10 free kicks • Master swipe, power & curve',
                 tag: 'PRACTICE',
                 onTap: () => _chooseTeamsAndStart(GameMode.training),
                 accent: const Color(0xFF73C8FF),
@@ -749,6 +606,9 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
       ('Wall Breaker', 'Beat the keeper 50 times', _careerGoals >= 50, Icons.shield_rounded),
       ('Veteran', 'Play 20 matches', _matchesPlayed >= 20, Icons.military_tech_rounded),
       ('Unshakeable', 'Reach a 5-shot best streak', _bestStreak >= 5, Icons.local_fire_department_rounded),
+      ('Safe Hands', 'Make 10 saves as the keeper', _careerSaves >= 10, Icons.pan_tool_alt_rounded),
+      ('Penalty King', 'Win 5 shootouts', _careerWins >= 5, Icons.workspace_premium_rounded),
+      ('Cup Winner', 'Win the King’s Cup', _cupsWon >= 1, Icons.emoji_events_rounded),
     ];
     final unlocked = milestones.where((m) => m.$3).length;
     return SingleChildScrollView(
@@ -794,9 +654,11 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
             _careerStat('MATCHES PLAYED', '$_matchesPlayed', Icons.sports_soccer_rounded, lime),
             _careerStat('TOTAL GOALS', '$_careerGoals', Icons.sports_score_rounded, gold),
             _careerStat('SHOTS TAKEN', '$_careerShots', Icons.track_changes_rounded, const Color(0xFF73C8FF)),
-            _careerStat('KEEPER SAVES', '$_careerSaves', Icons.pan_tool_alt_rounded, red),
+            _careerStat('SAVES MADE', '$_careerSaves', Icons.pan_tool_alt_rounded, red),
             _careerStat('CONVERSION', '$accuracy%', Icons.gps_fixed_rounded, lime),
             _careerStat('BEST STREAK', '$_bestStreak', Icons.local_fire_department_rounded, red),
+            _careerStat('SHOOTOUT WINS', '$_careerWins', Icons.military_tech_rounded, gold),
+            _careerStat('CUPS WON', '$_cupsWon', Icons.emoji_events_rounded, lime),
           ],
         ),
         const SizedBox(height: 20),
@@ -959,284 +821,49 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
   }
 
   Widget _matchScreen() {
-    return Column(
-      key: const ValueKey('match'),
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 7, 16, 8),
-          child: Row(children: [
-            IconButton(
-              onPressed: () => _confirmExit(),
-              icon: const Icon(Icons.close_rounded),
-              style: IconButton.styleFrom(backgroundColor: panel),
-            ),
-            const SizedBox(width: 8),
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(_modeTitle, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13, letterSpacing: 1.1)),
-              Text(_mode == GameMode.tournament
-              ? 'KING’S CUP • ROUND $_tournamentRound / 3'
-              : '$_difficulty • MATCH ${_mode == GameMode.golden ? 'SUDDEN DEATH' : '$_round'}', style: const TextStyle(color: muted, fontSize: 9, letterSpacing: 1)),
-            ])),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
-              decoration: BoxDecoration(color: panel, borderRadius: BorderRadius.circular(13)),
-              child: Row(children: [
-                const Icon(Icons.sports_soccer, color: lime, size: 15),
-                const SizedBox(width: 6),
-                Text('$_score', style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 17)),
-              ]),
-            ),
-          ]),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
-          child: _mode == GameMode.tournament
-              ? Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                  Text(_selectedTeam.shortName+'  '+_score.toString(), style: const TextStyle(color: lime, fontSize: 10, fontWeight: FontWeight.w900)),
-                  Text('VS  '+_opponentName, style: const TextStyle(color: muted, fontSize: 9, fontWeight: FontWeight.w900)),
-                  Text(_opponentScore.toString()+'  '+_selectedOpponent.shortName, style: const TextStyle(color: gold, fontSize: 10, fontWeight: FontWeight.w900)),
-                ])
-              : Row(children: [
-                  Expanded(child: Text(_selectedTeam.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: lime, fontSize: 9, fontWeight: FontWeight.w900))),
-                  const Padding(padding: EdgeInsets.symmetric(horizontal: 10), child: Text('VS', style: TextStyle(color: muted, fontSize: 9, fontWeight: FontWeight.w900))),
-                  Expanded(child: Text(_selectedOpponent.name, textAlign: TextAlign.end, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: gold, fontSize: 9, fontWeight: FontWeight.w900))),
-                ]),
-        ),
-        _matchProgress(),
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 9, 12, 8),
-            child: _pitchView(),
-          ),
-        ),
-        _matchControls(),
-      ],
-    );
-  }
-
-  Widget _matchProgress() {
-    if (_mode == GameMode.golden) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
-        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Text('GOALS $_score / 3', style: const TextStyle(color: lime, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1)),
-          const SizedBox(width: 18),
-          Text('SAVES $_saves / 3', style: const TextStyle(color: red, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1)),
-        ]),
-      );
-    }
-    final total = (_mode == GameMode.quick || _mode == GameMode.tournament) ? 5 : 10;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Row(children: List.generate(total, (i) {
-        final done = i < _shotHistory.length;
-        final active = i == _attempts;
-        final color = done
-            ? (_shotHistory[i] == 1 ? lime : _shotHistory[i] == 2 ? red : gold.withOpacity(.75))
-            : active ? gold : Colors.white.withOpacity(.09);
-        return Expanded(child: Container(
-          height: 5,
-          margin: EdgeInsets.only(right: i == total - 1 ? 0 : 5),
-          decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(9)),
-        ));
-      })),
-    );
-  }
-
-  Widget _pitchView() {
-    return LayoutBuilder(builder: (context, constraints) {
-      final size = Size(constraints.maxWidth, constraints.maxHeight);
-      return GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onPanDown: (d) => _setAim(d.localPosition, size),
-        onPanUpdate: (d) => _setAim(d.localPosition, size),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(25),
-          child: Stack(fit: StackFit.expand, children: [
-            AnimatedBuilder(
-              animation: Listenable.merge([_shotAnimation, _pulseAnimation]),
-              builder: (context, _) => CustomPaint(
-                painter: ProPitchPainter(
-                  aim: _aim,
-                  keeperKitColor: _keeperKitColor,
-                  keeperLane: _keeperLane,
-                  keeperVertical: _keeperVertical,
-                  targetLane: _targetLane,
-                  shotTaken: _shotTaken,
-                  goal: _goal,
-                  saved: _saved,
-                  wide: _wide,
-                  progress: _shotAnimation.value,
-                  pulse: _pulseAnimation.value,
-                ),
-              ),
-            ),
-            Positioned(top: 13, left: 0, right: 0, child: Center(
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
-                decoration: BoxDecoration(color: const Color(0xCC071019), borderRadius: BorderRadius.circular(30), border: Border.all(color: Colors.white.withOpacity(.08))),
-                child: Text(_commentary, style: TextStyle(color: _shotTaken ? (_goal ? lime : red) : Colors.white, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 1.2)),
-              ),
-            )),
-            if (!_shotTaken)
-              Positioned(left: 13, right: 13, bottom: 15, child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                _pitchHint(Icons.swipe_rounded, 'DRAG TO AIM'),
-                _pitchHint(Icons.adjust_rounded, 'FIND THE CORNER'),
-              ])),
-            if (_shotTaken)
-              Positioned(bottom: 20, left: 0, right: 0, child: Center(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 17, vertical: 10),
-                  decoration: BoxDecoration(color: ink.withOpacity(.86), borderRadius: BorderRadius.circular(30), border: Border.all(color: (_goal ? lime : red).withOpacity(.35))),
-                  child: Text(_commentary, style: TextStyle(color: _goal ? lime : red, fontWeight: FontWeight.w900, letterSpacing: 1.3, fontSize: 12)),
-                ),
-              )),
-          ]),
-        ),
-      );
-    });
-  }
-
-  Widget _pitchHint(IconData icon, String label) => Row(children: [
-    Icon(icon, color: Colors.white.withOpacity(.65), size: 14),
-    const SizedBox(width: 5),
-    Text(label, style: TextStyle(color: Colors.white.withOpacity(.65), fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: .8)),
-  ]);
-
-  Widget _virtualAimPad() {
-    return Column(mainAxisSize: MainAxisSize.min, children: [
-      GestureDetector(
-        onPanDown: (d) => _moveAimJoystick(d.localPosition),
-        onPanUpdate: (d) => _moveAimJoystick(d.localPosition),
-        onPanEnd: (_) => _releaseAimJoystick(),
-        onPanCancel: _releaseAimJoystick,
-        child: SizedBox(
-          width: 88,
-          height: 88,
-          child: Stack(alignment: Alignment.center, children: [
-            Container(
-              width: 84,
-              height: 84,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: const Color(0xFF172838).withOpacity(.96),
-                border: Border.all(color: Colors.white.withOpacity(.18), width: 2),
-                boxShadow: [BoxShadow(color: Colors.black.withOpacity(.25), blurRadius: 12, offset: const Offset(0, 4))],
-              ),
-            ),
-            Container(
-              width: 58,
-              height: 58,
-              decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: Colors.white.withOpacity(.10))),
-            ),
-            Transform.translate(
-              offset: _joystick * 25,
-              child: Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color(0xFFE7F6B7), lime, Color(0xFF83A83D)]),
-                  border: Border.all(color: Colors.white.withOpacity(.55), width: 1.5),
-                  boxShadow: [BoxShadow(color: lime.withOpacity(.22), blurRadius: 9)],
-                ),
-                child: const Icon(Icons.circle, color: Color(0xFF47621E), size: 9),
-              ),
-            ),
-          ]),
-        ),
+    final opp = _currentOpponent;
+    final format = switch (_mode) {
+      GameMode.quick || GameMode.tournament => MatchFormat.shootout,
+      GameMode.golden => MatchFormat.suddenDeath,
+      GameMode.training => MatchFormat.training,
+    };
+    final isCup = _mode == GameMode.tournament;
+    return ShootoutMatch(
+      key: ValueKey('match$_matchSeed'),
+      setup: MatchSetup(
+        format: format,
+        title: isCup ? 'KING’S CUP' : _modeTitle,
+        subtitle: isCup
+            ? '${_cupRoundNames[_tournamentRound - 1]} • ROUND $_tournamentRound / 3 • $_matchDifficulty'
+            : '$_matchDifficulty OPPONENT',
+        homeName: _selectedTeam.name,
+        homeShort: _selectedTeam.shortName,
+        awayName: opp.name,
+        awayShort: opp.shortName,
+        homeColor: _selectedTeam.color,
+        awayColor: opp.color,
+        keeperColor: _keeperKitColor,
+        difficulty: _matchDifficulty,
+        vibration: _vibration,
+        sound: _sound,
       ),
-      const SizedBox(height: 3),
-      const Text('MOVE TO AIM', style: TextStyle(color: muted, fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: .8)),
-    ]);
-  }
-
-  Widget _matchControls() {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(18, 10, 18, 12),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0B1722),
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-        border: Border(top: BorderSide(color: Colors.white.withOpacity(.06))),
-      ),
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Row(children: [
-          const Text('SHOT POWER', style: TextStyle(color: muted, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1.2)),
-          const Spacer(),
-          Text('${(_power * 100).round()}%', style: const TextStyle(color: lime, fontSize: 12, fontWeight: FontWeight.w900)),
-        ]),
-        SliderTheme(
-          data: SliderTheme.of(context).copyWith(
-            activeTrackColor: lime,
-            inactiveTrackColor: panel2,
-            thumbColor: Colors.white,
-            overlayColor: lime.withOpacity(.12),
-            trackHeight: 5,
-            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
-          ),
-          child: Slider(
-            value: _power,
-            min: .1,
-            max: 1,
-            onChanged: _shotTaken ? null : (v) => setState(() => _power = v),
-          ),
-        ),
-        const SizedBox(height: 2),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            _virtualAimPad(),
-            const Spacer(),
-            Column(mainAxisSize: MainAxisSize.min, children: [
-              SizedBox(
-                width: 78,
-                height: 78,
-                child: FilledButton(
-                  onPressed: _shotTaken ? null : _shoot,
-                  style: FilledButton.styleFrom(
-                    padding: EdgeInsets.zero,
-                    shape: const CircleBorder(),
-                    backgroundColor: lime,
-                    disabledBackgroundColor: panel2,
-                    foregroundColor: ink,
-                    elevation: 5,
-                  ),
-                  child: const Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                    Icon(Icons.sports_soccer_rounded, size: 27),
-                    SizedBox(height: 2),
-                    Text('SHOOT', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 10, letterSpacing: 1)),
-                  ]),
-                ),
-              ),
-              const SizedBox(height: 3),
-              Text(_shotTaken ? 'IN PLAY' : 'ACTION', style: const TextStyle(color: muted, fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: .8)),
-            ]),
-          ],
-        ),
-        const SizedBox(height: 7),
-        Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-          const Icon(Icons.shield_outlined, color: muted, size: 12),
-          const SizedBox(width: 5),
-          Text('$_difficulty GOALKEEPER', style: const TextStyle(color: muted, fontSize: 8, letterSpacing: 1.1, fontWeight: FontWeight.w800)),
-          const SizedBox(width: 13),
-          const Icon(Icons.flag_rounded, color: muted, size: 12),
-          const SizedBox(width: 5),
-          Text(_mode == GameMode.quick ? 'KICK ${_attempts + (_shotTaken ? 0 : 1)} OF 5' : 'ATTEMPT ${_attempts + 1}', style: const TextStyle(color: muted, fontSize: 8, letterSpacing: 1.1, fontWeight: FontWeight.w800)),
-        ]),
-      ]),
+      onFinished: _onMatchFinished,
+      onExit: _returnHome,
     );
   }
 
   Widget _resultScreen() {
-    final tournamentWon = _mode == GameMode.tournament && _score > _opponentScore;
-    final tournamentChampion = tournamentWon && _tournamentRound == 3;
-    final title = _mode == GameMode.tournament
-        ? (tournamentChampion ? 'KING’S CUP CHAMPION!' : tournamentWon ? 'ROUND WON!' : 'TOURNAMENT OVER')
-        : _mode == GameMode.quick
-            ? (_score >= 5 ? 'PERFECT FIVE!' : _score >= 4 ? 'ELITE FINISHER!' : _score >= 3 ? 'SOLID PERFORMANCE' : 'KEEP PRACTISING')
-            : _mode == GameMode.golden
-                ? (_score >= 3 ? 'GOLDEN GOAL!' : 'THE KEEPER WINS')
-                : 'TRAINING COMPLETE';
+    final r = _lastResult;
+    final isCup = _mode == GameMode.tournament;
+    final training = _mode == GameMode.training;
+    final champion = isCup && r.won && _tournamentRound == 3;
+    final title = isCup
+        ? (champion ? 'KING’S CUP CHAMPION!' : r.won ? 'ROUND WON!' : 'KNOCKED OUT')
+        : training
+            ? (r.goals >= 8 ? 'ELITE FINISHING!' : r.goals >= 5 ? 'SOLID SESSION' : 'KEEP PRACTISING')
+            : (r.won ? 'VICTORY!' : 'DEFEAT');
+    final accent = training || r.won ? gold : red;
+    final opp = _currentOpponent;
     return Center(
       key: const ValueKey('result'),
       child: SingleChildScrollView(
@@ -1244,45 +871,43 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
         child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
           Container(
             width: 92, height: 92,
-            decoration: BoxDecoration(color: gold.withOpacity(.13), shape: BoxShape.circle, border: Border.all(color: gold.withOpacity(.35))),
-            child: const Icon(Icons.emoji_events_rounded, color: gold, size: 53),
+            decoration: BoxDecoration(color: accent.withOpacity(.13), shape: BoxShape.circle, border: Border.all(color: accent.withOpacity(.35))),
+            child: Icon(r.won || training ? Icons.emoji_events_rounded : Icons.sports_soccer_rounded, color: accent, size: 53),
           ),
           const SizedBox(height: 22),
           const Text('FULL TIME', style: TextStyle(color: muted, fontWeight: FontWeight.w900, letterSpacing: 3, fontSize: 11)),
           const SizedBox(height: 8),
           Text(title, textAlign: TextAlign.center, style: const TextStyle(fontSize: 25, fontWeight: FontWeight.w900, letterSpacing: .6)),
           const SizedBox(height: 9),
-          Text(_modeTitle, style: const TextStyle(color: muted, fontSize: 10, letterSpacing: 1.6)),
-          if (_mode != GameMode.tournament) ...[
+          Text(isCup ? 'KING’S CUP • ${_cupRoundNames[_tournamentRound - 1]}' : _modeTitle, style: const TextStyle(color: muted, fontSize: 10, letterSpacing: 1.6)),
+          if (!training) ...[
             const SizedBox(height: 13),
             Row(mainAxisAlignment: MainAxisAlignment.center, children: [
               _teamBadge(_selectedTeam, size: 34),
               const SizedBox(width: 9),
               Flexible(child: Text(_selectedTeam.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w900))),
               const Padding(padding: EdgeInsets.symmetric(horizontal: 10), child: Text('VS', style: TextStyle(color: gold, fontSize: 9, fontWeight: FontWeight.w900))),
-              Flexible(child: Text(_selectedOpponent.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w900))),
+              Flexible(child: Text(opp.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w900))),
               const SizedBox(width: 9),
-              _teamBadge(_selectedOpponent, size: 34),
+              _teamBadge(opp, size: 34),
             ]),
-          ],
-          if (_mode == GameMode.tournament) ...[
             const SizedBox(height: 12),
-            Text('$_score  —  $_opponentScore', style: const TextStyle(fontSize: 25, fontWeight: FontWeight.w900, color: gold)),
-            Text(_selectedTeam.name+'  vs  '+_opponentName, style: const TextStyle(color: muted, fontSize: 9, letterSpacing: 1.2)),
+            Text('${r.goals}  —  ${r.oppGoals}', style: TextStyle(fontSize: 30, fontWeight: FontWeight.w900, color: accent)),
+            const Text('PENALTY SHOOTOUT', style: TextStyle(color: muted, fontSize: 9, letterSpacing: 1.4)),
           ],
           const SizedBox(height: 25),
           Container(
             padding: const EdgeInsets.all(21),
             decoration: BoxDecoration(color: panel, borderRadius: BorderRadius.circular(23), border: Border.all(color: Colors.white.withOpacity(.06))),
             child: Column(children: [
-              Text('$_score', style: const TextStyle(fontSize: 58, fontWeight: FontWeight.w900, color: lime, height: 1)),
+              Text('${r.goals}', style: const TextStyle(fontSize: 58, fontWeight: FontWeight.w900, color: lime, height: 1)),
               const Text('GOALS SCORED', style: TextStyle(color: muted, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1.7)),
               const SizedBox(height: 22),
               Row(children: [
-                _resultStat('ATTEMPTS', '$_attempts'),
-                _resultStat('CONVERSION', '${_attempts == 0 ? 0 : (_score / _attempts * 100).round()}%'),
-                _resultStat('SAVES', '$_saves'),
-                _resultStat('BEST STREAK', '$_matchBestStreak'),
+                _resultStat('KICKS', '${r.attempts}'),
+                _resultStat('CONVERSION', '${r.attempts == 0 ? 0 : (r.goals / r.attempts * 100).round()}%'),
+                if (!training) _resultStat('SAVES', '${r.saves}'),
+                _resultStat('BEST STREAK', '${r.bestStreak}'),
               ]),
             ]),
           ),
@@ -1294,11 +919,11 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
               child: const Text('★  PERSONAL BEST UPDATED', style: TextStyle(color: lime, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1)),
             ),
           const SizedBox(height: 25),
-          if (_mode == GameMode.tournament && tournamentWon && !tournamentChampion) ...[
+          if (isCup && r.won && !champion) ...[
             SizedBox(width: double.infinity, height: 54, child: FilledButton.icon(
               onPressed: _startNextTournamentRound,
               icon: const Icon(Icons.arrow_forward_rounded),
-              label: const Text('NEXT ROUND', style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1.2)),
+              label: Text('NEXT: ${_cupRoundNames[_tournamentRound]}', style: const TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1.2)),
               style: FilledButton.styleFrom(backgroundColor: gold, foregroundColor: ink, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
             )),
             const SizedBox(height: 10),
@@ -1339,7 +964,7 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
         ]),
         const SizedBox(height: 20),
         _settingsGroup('GAMEPLAY', [
-          _settingTile(Icons.speed_rounded, 'Goalkeeper difficulty', _difficulty, onTap: _cycleDifficulty),
+          _settingTile(Icons.speed_rounded, 'Opponent difficulty', _difficulty, onTap: _cycleDifficulty),
           _settingTile(Icons.palette_rounded, 'Goalkeeper kit', keeperKitNames[_keeperKitIndex], onTap: _cycleKeeperKit),
           _settingTile(Icons.school_rounded, 'How to play', 'View tutorial', onTap: _showTutorial),
         ]),
@@ -1365,7 +990,7 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
           ),
         ]),
         const Spacer(),
-        const Center(child: Text('PENALTY KINGS  •  VERSION 3.4.0', style: TextStyle(color: muted, fontSize: 9, letterSpacing: 1.2))),
+        const Center(child: Text('PENALTY KINGS  •  VERSION 4.0.0', style: TextStyle(color: muted, fontSize: 9, letterSpacing: 1.2))),
       ]),
     );
   }
@@ -1393,22 +1018,6 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
       _ => 'AMATEUR',
     });
     _saveStats();
-  }
-
-  Future<void> _confirmExit() async {
-    final exit = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: panel,
-        title: const Text('Leave shootout?'),
-        content: const Text('Your current match progress will be lost.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('KEEP PLAYING')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), style: FilledButton.styleFrom(backgroundColor: lime, foregroundColor: ink), child: const Text('LEAVE')),
-        ],
-      ),
-    );
-    if (exit == true) _returnHome();
   }
 }
 
@@ -1445,169 +1054,4 @@ class StadiumBackdropPainter extends CustomPainter {
   }
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
-
-class ProPitchPainter extends CustomPainter {
-  final Offset aim;
-  final Color keeperKitColor;
-  final int keeperLane;
-  final int keeperVertical;
-  final int targetLane;
-  final bool shotTaken;
-  final bool goal;
-  final bool saved;
-  final bool wide;
-  final double progress;
-  final double pulse;
-
-  ProPitchPainter({
-    required this.aim,
-    required this.keeperKitColor,
-    required this.keeperLane,
-    required this.keeperVertical,
-    required this.targetLane,
-    required this.shotTaken,
-    required this.goal,
-    required this.saved,
-    required this.wide,
-    required this.progress,
-    required this.pulse,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final bounds = Offset.zero & size;
-    canvas.drawRect(bounds, Paint()..shader = const LinearGradient(
-      begin: Alignment.topCenter, end: Alignment.bottomCenter,
-      colors: [Color(0xFF142C39), Color(0xFF173E36), Color(0xFF0B2925), Color(0xFF0D241F)],
-      stops: [0, .28, .62, 1],
-    ).createShader(bounds));
-
-    _drawStadium(canvas, size);
-    _drawPitch(canvas, size);
-    final goalRect = Rect.fromLTWH(size.width * .105, size.height * .155, size.width * .79, size.height * .31);
-    _drawGoal(canvas, goalRect);
-    _drawKeeper(canvas, size, goalRect);
-    _drawAimAndBall(canvas, size);
-  }
-
-  void _drawStadium(Canvas canvas, Size size) {
-    final light = Paint()..maskFilter = const MaskFilter.blur(BlurStyle.normal, 18)..color = Colors.white.withOpacity(.25);
-    for (int i = 0; i < 4; i++) {
-      final x = size.width * (i.isEven ? .08 : .92);
-      final y = size.height * (.07 + (i ~/ 2) * .025);
-      canvas.drawCircle(Offset(x, y), 8, light);
-      final dots = Paint()..color = Colors.white.withOpacity(.65);
-      for (int j = 0; j < 5; j++) {
-        canvas.drawCircle(Offset(x - 12 + j * 6, y), 1.4, dots);
-      }
-    }
-    final crowd = Paint()..color = const Color(0xFF9FB9B2).withOpacity(.12);
-    for (int row = 0; row < 4; row++) {
-      for (int i = 0; i < 42; i++) {
-        canvas.drawCircle(Offset(size.width * i / 41, size.height * (.08 + row * .018)), 1.2, crowd);
-      }
-    }
-    final dark = Paint()..color = Colors.black.withOpacity(.22);
-    canvas.drawRect(Rect.fromLTWH(0, size.height * .39, size.width, size.height * .12), dark);
-  }
-
-  void _drawPitch(Canvas canvas, Size size) {
-    final field = Rect.fromLTWH(size.width * .035, size.height * .39, size.width * .93, size.height * .61);
-    final grass = Paint()..shader = const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFF1B5A42), Color(0xFF0C392C)]).createShader(field);
-    canvas.drawRect(field, grass);
-    for (int i = 0; i < 7; i++) {
-      if (i.isEven) {
-        canvas.drawRect(Rect.fromLTWH(field.left, field.top + field.height * i / 7, field.width, field.height / 7), Paint()..color = Colors.white.withOpacity(.025));
-      }
-    }
-    final line = Paint()..color = Colors.white.withOpacity(.24)..style = PaintingStyle.stroke..strokeWidth = 1.5;
-    canvas.drawRect(Rect.fromLTWH(size.width * .07, size.height * .41, size.width * .86, size.height * .57), line);
-    canvas.drawCircle(Offset(size.width * .5, size.height * .74), size.width * .18, line);
-    canvas.drawCircle(Offset(size.width * .5, size.height * .74), 2.5, Paint()..color = Colors.white.withOpacity(.55));
-    canvas.drawRect(Rect.fromLTWH(size.width * .18, size.height * .41, size.width * .64, size.height * .27), line);
-    canvas.drawRect(Rect.fromLTWH(size.width * .33, size.height * .41, size.width * .34, size.height * .12), line);
-  }
-
-  void _drawGoal(Canvas canvas, Rect goal) {
-    final shadow = Paint()..color = Colors.black.withOpacity(.28)..maskFilter = const MaskFilter.blur(BlurStyle.normal, 13);
-    canvas.drawRect(goal.shift(const Offset(0, 6)), shadow);
-    final net = Paint()..color = const Color(0xFFDCE8E7).withOpacity(.32)..strokeWidth = 1;
-    for (int i = 0; i <= 12; i++) {
-      final x = goal.left + goal.width * i / 12;
-      canvas.drawLine(Offset(x, goal.top), Offset(x, goal.bottom), net);
-    }
-    for (int i = 0; i <= 7; i++) {
-      final y = goal.top + goal.height * i / 7;
-      canvas.drawLine(Offset(goal.left, y), Offset(goal.right, y), net);
-    }
-    final frame = Paint()..color = const Color(0xFFF3F7F5)..style = PaintingStyle.stroke..strokeWidth = 7..strokeJoin = StrokeJoin.round;
-    canvas.drawRect(goal, frame);
-    final inner = Paint()..color = Colors.white.withOpacity(.35)..style = PaintingStyle.stroke..strokeWidth = 1.2;
-    canvas.drawRect(goal.deflate(5), inner);
-  }
-
-  void _drawKeeper(Canvas canvas, Size size, Rect goalRect) {
-    final lane = shotTaken ? keeperLane : 1;
-    final centerX = goalRect.left + goalRect.width * (lane + .5) / 3;
-    final keeperHeight = keeperVertical == 0 ? .32 : keeperVertical == 1 ? .64 : .84;
-    final heightProgress = shotTaken ? Curves.easeOut.transform(progress) : 0.0;
-    final baseY = goalRect.top + goalRect.height * (.77 + (keeperHeight - .77) * heightProgress);
-    final dive = shotTaken ? (targetLane - keeperLane).toDouble() * progress * 36 : 0.0;
-    final x = centerX + dive;
-    final y = baseY - (shotTaken && keeperLane == targetLane ? math.sin(progress * math.pi) * 12 : 0);
-    final bodyColor = keeperKitColor;
-    final body = Paint()..color = bodyColor;
-    final outline = Paint()..color = const Color(0xFF1B2931)..strokeWidth = 7..strokeCap = StrokeCap.round;
-    final skin = Paint()..color = const Color(0xFFC98C68);
-    canvas.drawCircle(Offset(x, y - 25), 10, skin);
-    canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromCenter(center: Offset(x, y + 3), width: 25, height: 39), const Radius.circular(8)), body);
-    canvas.drawLine(Offset(x - 8, y - 4), Offset(x - 25 - dive.sign * 8, y + 4), body..strokeWidth = 8..strokeCap = StrokeCap.round);
-    canvas.drawLine(Offset(x + 8, y - 4), Offset(x + 25 + dive.sign * 8, y + 4), body..strokeWidth = 8..strokeCap = StrokeCap.round);
-    canvas.drawCircle(Offset(x - 28 - (dive < 0 ? -1.0 : dive > 0 ? 1.0 : 0.0) * 8, y + 4), 6, Paint()..color = const Color(0xFFF2F5F4));
-    canvas.drawCircle(Offset(x + 28 + (dive < 0 ? -1.0 : dive > 0 ? 1.0 : 0.0) * 8, y + 4), 6, Paint()..color = const Color(0xFFF2F5F4));
-    canvas.drawLine(Offset(x - 7, y + 19), Offset(x - 12, y + 39), outline);
-    canvas.drawLine(Offset(x + 7, y + 19), Offset(x + 12, y + 39), outline);
-  }
-
-  void _drawAimAndBall(Canvas canvas, Size size) {
-    final start = Offset(size.width * .5, size.height * .84);
-    final target = Offset(size.width * (.5 + aim.dx * .34), size.height * (.29 + aim.dy * .13));
-    if (!shotTaken) {
-      final line = Paint()..color = lime.withOpacity(.75)..strokeWidth = 2..style = PaintingStyle.stroke;
-      final path = Path()..moveTo(start.dx, start.dy)..quadraticBezierTo(size.width * .5, size.height * .55, target.dx, target.dy);
-      canvas.drawPath(path, line);
-      final ring = Paint()..color = lime.withOpacity(.18 + pulse * .15)..style = PaintingStyle.fill;
-      canvas.drawCircle(target, 17 + pulse * 3, ring);
-      canvas.drawCircle(target, 10, Paint()..color = lime..style = PaintingStyle.stroke..strokeWidth = 2);
-      canvas.drawCircle(target, 3, Paint()..color = lime);
-    }
-    final end = shotTaken
-        ? Offset(
-            start.dx + (target.dx - start.dx) * Curves.easeOutCubic.transform(progress),
-            start.dy + (target.dy - start.dy) * Curves.easeOutCubic.transform(progress),
-          )
-        : start;
-    final radius = shotTaken ? 13.0 - progress * 5.0 : 13.0;
-    canvas.drawCircle(end + const Offset(2, 4), radius + 2, Paint()..color = Colors.black.withOpacity(.3));
-    canvas.drawCircle(end, radius, Paint()..shader = const RadialGradient(colors: [Colors.white, Color(0xFFBBC8CE), Color(0xFF657780)]).createShader(Rect.fromCircle(center: end, radius: radius)));
-    final seams = Paint()..color = const Color(0xFF1D2A31)..strokeWidth = 1.2..style = PaintingStyle.stroke;
-    canvas.drawCircle(end, radius * .42, seams);
-    canvas.drawLine(end + Offset(-radius * .7, 0), end + Offset(radius * .7, 0), seams);
-    canvas.drawLine(end + Offset(0, -radius * .7), end + Offset(0, radius * .7), seams);
-  }
-
-  @override
-  bool shouldRepaint(covariant ProPitchPainter old) =>
-      old.aim != aim ||
-      old.keeperKitColor != keeperKitColor ||
-      old.keeperLane != keeperLane ||
-      old.keeperVertical != keeperVertical ||
-      old.targetLane != targetLane ||
-      old.shotTaken != shotTaken ||
-      old.goal != goal ||
-      old.saved != saved ||
-      old.wide != wide ||
-      old.progress != progress ||
-      old.pulse != pulse;
 }
