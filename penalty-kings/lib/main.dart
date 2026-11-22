@@ -165,7 +165,6 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
   int get _maxShots => (_mode == GameMode.quick || _mode == GameMode.tournament) ? 5 : 999;
   bool get _finished => (_mode == GameMode.quick || _mode == GameMode.tournament) && _attempts >= _maxShots;
   Color get _keeperKitColor => keeperKits[_keeperKitIndex.clamp(0, keeperKits.length - 1).toInt()];
-  String get _tournamentOpponent => const ['NORTH CITY', 'ROYAL ATHLETIC', 'TITAN FC'][_tournamentRound - 1];
   String get _modeTitle => switch (_mode) {
         GameMode.quick => 'QUICK SHOOTOUT',
         GameMode.golden => 'GOLDEN GOAL',
