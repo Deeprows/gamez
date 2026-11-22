@@ -976,7 +976,7 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
           ),
         ]),
         const Spacer(),
-        const Center(child: Text('PENALTY KINGS  •  VERSION 3.0.0', style: TextStyle(color: muted, fontSize: 9, letterSpacing: 1.2))),
+        const Center(child: Text('PENALTY KINGS  •  VERSION 3.1.0', style: TextStyle(color: muted, fontSize: 9, letterSpacing: 1.2))),
       ]),
     );
   }
