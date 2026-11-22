@@ -15,6 +15,59 @@ const gold = Color(0xFFFFC65C);
 const keeperKits = <Color>[Color(0xFFFFB83F), Color(0xFF55B8FF), Color(0xFFFF6B8A), Color(0xFFB48CFF)];
 const keeperKitNames = <String>['GOLDEN CAPTAIN', 'ICE BLUE', 'NEON STRIKER', 'ROYAL PURPLE'];
 
+class TeamOption {
+  final String id, name, shortName;
+  final Color color;
+  const TeamOption(this.id, this.name, this.shortName, this.color);
+}
+const clubTeams = <TeamOption>[
+  TeamOption('man_city','Manchester City','MCI',Color(0xFF6CABDD)),
+  TeamOption('man_utd','Manchester United','MUN',Color(0xFFDA291C)),
+  TeamOption('liverpool','Liverpool','LIV',Color(0xFFC8102E)),
+  TeamOption('arsenal','Arsenal','ARS',Color(0xFFEF0107)),
+  TeamOption('chelsea','Chelsea','CHE',Color(0xFF034694)),
+  TeamOption('tottenham','Tottenham Hotspur','TOT',Color(0xFF132257)),
+  TeamOption('newcastle','Newcastle United','NEW',Color(0xFF241F20)),
+  TeamOption('aston_villa','Aston Villa','AVL',Color(0xFF670E36)),
+  TeamOption('real_madrid','Real Madrid','RMA',Color(0xFFFEBE10)),
+  TeamOption('barcelona','Barcelona','BAR',Color(0xFFA50044)),
+  TeamOption('atletico','Atlético Madrid','ATM',Color(0xFFCB3524)),
+  TeamOption('bayern','Bayern Munich','BAY',Color(0xFFDC052D)),
+  TeamOption('dortmund','Borussia Dortmund','BVB',Color(0xFFFDE100)),
+  TeamOption('psg','Paris Saint-Germain','PSG',Color(0xFF004170)),
+  TeamOption('inter','Inter Milan','INT',Color(0xFF0068A8)),
+  TeamOption('milan','AC Milan','MIL',Color(0xFFFB090B)),
+  TeamOption('juventus','Juventus','JUV',Color(0xFF222222)),
+  TeamOption('napoli','Napoli','NAP',Color(0xFF00AEEF)),
+  TeamOption('ajax','Ajax','AJA',Color(0xFFD2122E)),
+  TeamOption('benfica','Benfica','BEN',Color(0xFFE32219)),
+];
+const nationalTeams = <TeamOption>[
+  TeamOption('nigeria','Nigeria','NGA',Color(0xFF008751)),
+  TeamOption('egypt','Egypt','EGY',Color(0xFFCE1126)),
+  TeamOption('ghana','Ghana','GHA',Color(0xFF006B3F)),
+  TeamOption('senegal','Senegal','SEN',Color(0xFF00853F)),
+  TeamOption('morocco','Morocco','MAR',Color(0xFFC1272D)),
+  TeamOption('ivory_coast','Ivory Coast','CIV',Color(0xFFF77F00)),
+  TeamOption('south_africa','South Africa','RSA',Color(0xFF007A4D)),
+  TeamOption('england','England','ENG',Color(0xFFCE1124)),
+  TeamOption('france','France','FRA',Color(0xFF0055A4)),
+  TeamOption('spain','Spain','ESP',Color(0xFFAA151B)),
+  TeamOption('portugal','Portugal','POR',Color(0xFFDA291C)),
+  TeamOption('germany','Germany','GER',Color(0xFF222222)),
+  TeamOption('italy','Italy','ITA',Color(0xFF009246)),
+  TeamOption('netherlands','Netherlands','NED',Color(0xFFFF6600)),
+  TeamOption('brazil','Brazil','BRA',Color(0xFFFFDF00)),
+  TeamOption('argentina','Argentina','ARG',Color(0xFF75AADB)),
+  TeamOption('uruguay','Uruguay','URU',Color(0xFF5CC6E8)),
+  TeamOption('usa','United States','USA',Color(0xFF3C3B6E)),
+  TeamOption('mexico','Mexico','MEX',Color(0xFF006847)),
+  TeamOption('japan','Japan','JPN',Color(0xFFBC002D)),
+];
+TeamOption teamById(String id) => [...clubTeams, ...nationalTeams]
+    .firstWhere((team) => team.id == id, orElse: () => clubTeams.first);
+
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SystemChrome.setPreferredOrientations([
@@ -75,6 +128,8 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
   bool _vibration = true;
   bool _tutorialSeen = false;
   int _keeperKitIndex = 0;
+  TeamOption _selectedTeam = clubTeams[0];
+  TeamOption _selectedOpponent = clubTeams[3];
   final List<String> _leaderboard = <String>[];
   int _tournamentRound = 1;
   int _opponentScore = 0;
@@ -147,6 +202,8 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
       _vibration = prefs.getBool('vibration') ?? true;
       _tutorialSeen = prefs.getBool('tutorial_seen') ?? false;
       _keeperKitIndex = (prefs.getInt('keeper_kit') ?? 0).clamp(0, keeperKits.length - 1).toInt();
+      _selectedTeam = teamById(prefs.getString('selected_team') ?? 'man_city');
+      _selectedOpponent = teamById(prefs.getString('selected_opponent') ?? 'arsenal');
       _leaderboard
         ..clear()
         ..addAll(prefs.getStringList('local_leaderboard') ?? <String>[]);
@@ -166,6 +223,8 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
     await prefs.setBool('vibration', _vibration);
     await prefs.setBool('tutorial_seen', _tutorialSeen);
     await prefs.setInt('keeper_kit', _keeperKitIndex);
+    await prefs.setString('selected_team', _selectedTeam.id);
+    await prefs.setString('selected_opponent', _selectedOpponent.id);
     await prefs.setStringList('local_leaderboard', _leaderboard);
   }
 
@@ -177,12 +236,115 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
     super.dispose();
   }
 
+
+  Future<void> _chooseTeamsAndStart(GameMode mode) async {
+    var national = nationalTeams.any((t) => t.id == _selectedTeam.id);
+    var player = _selectedTeam;
+    var opponent = _selectedOpponent;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: panel,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(26))),
+      builder: (sheetContext) => StatefulBuilder(builder: (context, updateSheet) {
+        final teams = national ? nationalTeams : clubTeams;
+        if (!teams.any((t) => t.id == player.id)) player = teams.first;
+        if (!teams.any((t) => t.id == opponent.id) || opponent.id == player.id) {
+          opponent = teams.firstWhere((t) => t.id != player.id);
+        }
+        Widget selector(String label, TeamOption selected, ValueChanged<TeamOption> onChanged) {
+          return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(label, style: const TextStyle(color: muted, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1.3)),
+            const SizedBox(height: 7),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: BoxDecoration(color: panel2, borderRadius: BorderRadius.circular(14)),
+              child: DropdownButtonHideUnderline(child: DropdownButton<String>(
+                value: selected.id, isExpanded: true, dropdownColor: panel2, iconEnabledColor: lime,
+                items: teams.map((t) => DropdownMenuItem<String>(
+                  value: t.id,
+                  child: Row(children: [_teamBadge(t,size:30), const SizedBox(width:10), Text(t.name,style:const TextStyle(fontSize:12,fontWeight:FontWeight.w800))]),
+                )).toList(),
+                onChanged: (id) {
+                  if (id == null) return;
+                  onChanged(teams.firstWhere((t) => t.id == id));
+                },
+              )),
+            ),
+          ]);
+        }
+        return SafeArea(child: Padding(
+          padding: EdgeInsets.fromLTRB(20,18,20,18+MediaQuery.of(context).viewInsets.bottom),
+          child: Column(mainAxisSize:MainAxisSize.min,crossAxisAlignment:CrossAxisAlignment.start,children:[
+            Row(children:[const Expanded(child:Text('CHOOSE YOUR SIDES',style:TextStyle(fontSize:17,fontWeight:FontWeight.w900,letterSpacing:1))),IconButton(onPressed:()=>Navigator.pop(sheetContext),icon:const Icon(Icons.close_rounded,color:muted))]),
+            const Text('Choose your favourite team and the opponent you want to face.',style:TextStyle(color:muted,fontSize:11)),
+            const SizedBox(height:15),
+            Container(padding:const EdgeInsets.all(4),decoration:BoxDecoration(color:ink,borderRadius:BorderRadius.circular(13)),child:Row(children:[
+              Expanded(child:_categoryChoice('CLUBS',!national,()=>updateSheet(()=>{national=false;player=clubTeams.first;opponent=clubTeams[3];}))),
+              Expanded(child:_categoryChoice('NATIONAL TEAMS',national,()=>updateSheet(()=>{national=true;player=nationalTeams.first;opponent=nationalTeams[7];}))),
+            ])),
+            const SizedBox(height:16),
+            selector('YOUR TEAM',player,(t)=>updateSheet(()=>{player=t;if(opponent.id==player.id)opponent=teams.firstWhere((x)=>x.id!=player.id);})),
+            const SizedBox(height:12),
+            selector('YOUR OPPONENT',opponent,(t)=>updateSheet(()=>opponent=t)),
+            const SizedBox(height:16),
+            Row(children:[Expanded(child:_teamPreview(player,'HOME')),Padding(padding:const EdgeInsets.symmetric(horizontal:8),child:Text('VS',style:TextStyle(color:gold,fontWeight:FontWeight.w900))),Expanded(child:_teamPreview(opponent,'AWAY'))]),
+            const SizedBox(height:18),
+            SizedBox(width:double.infinity,height:52,child:FilledButton(
+              onPressed:player.id==opponent.id?null:(){
+                setState(()=>{_selectedTeam=player;_selectedOpponent=opponent;});
+                _saveStats();
+                Navigator.pop(sheetContext);
+                _start(mode);
+              },
+              style:FilledButton.styleFrom(backgroundColor:lime,foregroundColor:ink,disabledBackgroundColor:panel2,shape:RoundedRectangleBorder(borderRadius:BorderRadius.circular(15))),
+              child:const Text('CONFIRM TEAMS & PLAY',style:TextStyle(fontWeight:FontWeight.w900,letterSpacing:1)),
+            )),
+          ]),
+        ));
+      }),
+    );
+  }
+
+  Widget _categoryChoice(String label,bool selected,VoidCallback onTap)=>InkWell(
+    onTap:onTap,borderRadius:BorderRadius.circular(10),
+    child:Container(padding:const EdgeInsets.symmetric(vertical:11),decoration:BoxDecoration(color:selected?lime:Colors.transparent,borderRadius:BorderRadius.circular(10)),
+      child:Text(label,textAlign:TextAlign.center,style:TextStyle(color:selected?ink:muted,fontSize:9,fontWeight:FontWeight.w900,letterSpacing:.6))),
+  );
+
+  Widget _teamBadge(TeamOption team,{double size=38})=>Container(
+    width:size,height:size,alignment:Alignment.center,
+    decoration:BoxDecoration(color:team.color.withOpacity(.18),borderRadius:BorderRadius.circular(size*.28),border:Border.all(color:team.color.withOpacity(.7))),
+    child:Text(team.shortName,style:TextStyle(color:team.color,fontSize:size*.25,fontWeight:FontWeight.w900)),
+  );
+
+  Widget _teamPreview(TeamOption team,String side)=>Container(
+    padding:const EdgeInsets.symmetric(vertical:10,horizontal:7),decoration:BoxDecoration(color:ink,borderRadius:BorderRadius.circular(14)),
+    child:Column(children:[_teamBadge(team,size:42),const SizedBox(height:6),Text(side,style:const TextStyle(color:muted,fontSize:8,fontWeight:FontWeight.w900)),const SizedBox(height:3),
+      Text(team.name,textAlign:TextAlign.center,maxLines:1,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:10,fontWeight:FontWeight.w900))]),
+  );
+
+  Widget _matchupCard()=>Material(
+    color:panel,borderRadius:BorderRadius.circular(18),
+    child:InkWell(onTap:()=>_chooseTeamsAndStart(_mode),borderRadius:BorderRadius.circular(18),
+      child:Padding(padding:const EdgeInsets.all(13),child:Row(children:[
+        _teamBadge(_selectedTeam,size:42),const SizedBox(width:9),
+        Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+          const Text('YOUR MATCHUP',style:TextStyle(color:muted,fontSize:8,fontWeight:FontWeight.w900,letterSpacing:1.2)),
+          const SizedBox(height:4),
+          Text(_selectedTeam.name+'  vs  '+_selectedOpponent.name,maxLines:1,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:11,fontWeight:FontWeight.w900)),
+          const SizedBox(height:3),const Text('Tap to change clubs or national teams',style:TextStyle(color:muted,fontSize:9)),
+        ])),
+        _teamBadge(_selectedOpponent,size:42),const SizedBox(width:4),const Icon(Icons.edit_rounded,color:lime,size:17),
+      ]))),
+  );
+
   void _start(GameMode mode) {
     _nextShotTimer?.cancel();
     setState(() {
       _mode = mode;
       _tournamentRound = 1;
-      _opponentName = mode == GameMode.tournament ? _tournamentOpponent : 'NORTH CITY';
+      _opponentName = _selectedOpponent.name;
       _opponentScore = mode == GameMode.tournament ? _random.nextInt(6) : 0;
       _score = 0;
       _attempts = 0;
@@ -463,6 +625,8 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
               ),
               const SizedBox(height: 24),
               _heroBanner(),
+              const SizedBox(height: 13),
+              _matchupCard(),
               const SizedBox(height: 20),
               Row(
                 children: [
@@ -476,7 +640,7 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
                 title: 'QUICK SHOOTOUT',
                 subtitle: '5 penalties • Beat your best score',
                 tag: 'CLASSIC',
-                onTap: () => _start(GameMode.quick),
+                onTap: () => _chooseTeamsAndStart(GameMode.quick),
                 accent: lime,
               ),
               const SizedBox(height: 10),
@@ -485,7 +649,7 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
                 title: 'GOLDEN GOAL',
                 subtitle: 'First to 3 goals wins the shootout',
                 tag: 'SUDDEN DEATH',
-                onTap: () => _start(GameMode.golden),
+                onTap: () => _chooseTeamsAndStart(GameMode.golden),
                 accent: gold,
               ),
               const SizedBox(height: 10),
@@ -494,7 +658,7 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
                 title: 'KING’S CUP',
                 subtitle: '3-round knockout • Win the trophy',
                 tag: 'TOURNAMENT',
-                onTap: () => _start(GameMode.tournament),
+                onTap: () => _chooseTeamsAndStart(GameMode.tournament),
                 accent: gold,
               ),
               const SizedBox(height: 10),
@@ -503,7 +667,7 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
                 title: 'TRAINING GROUND',
                 subtitle: '10 attempts • Sharpen your accuracy',
                 tag: 'PRACTICE',
-                onTap: () => _start(GameMode.training),
+                onTap: () => _chooseTeamsAndStart(GameMode.training),
                 accent: const Color(0xFF73C8FF),
               ),
               const SizedBox(height: 18),
@@ -803,13 +967,12 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
             ),
           ]),
         ),
-        if (_mode == GameMode.tournament)
-          Padding(
+        Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
             child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-              Text('YOU  $_score', style: const TextStyle(color: lime, fontSize: 10, fontWeight: FontWeight.w900)),
-              Text('VS  $_opponentName', style: const TextStyle(color: muted, fontSize: 9, fontWeight: FontWeight.w900)),
-              Text('$_opponentScore  CPU', style: const TextStyle(color: gold, fontSize: 10, fontWeight: FontWeight.w900)),
+              Text(_selectedTeam.shortName+'  '+_score.toString(), style: const TextStyle(color: lime, fontSize: 10, fontWeight: FontWeight.w900)),
+              Text('VS  '+_opponentName, style: const TextStyle(color: muted, fontSize: 9, fontWeight: FontWeight.w900)),
+              Text(_opponentScore.toString()+'  '+_selectedOpponent.shortName, style: const TextStyle(color: gold, fontSize: 10, fontWeight: FontWeight.w900)),
             ]),
           ),
         _matchProgress(),
@@ -1005,7 +1168,7 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
           if (_mode == GameMode.tournament) ...[
             const SizedBox(height: 12),
             Text('$_score  —  $_opponentScore', style: const TextStyle(fontSize: 25, fontWeight: FontWeight.w900, color: gold)),
-            Text('YOU  vs  $_opponentName', style: const TextStyle(color: muted, fontSize: 9, letterSpacing: 1.2)),
+            Text(_selectedTeam.name+'  vs  '+_opponentName, style: const TextStyle(color: muted, fontSize: 9, letterSpacing: 1.2)),
           ],
           const SizedBox(height: 25),
           Container(
