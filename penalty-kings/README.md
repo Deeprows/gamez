@@ -1,4 +1,4 @@
-# Penalty Kings — Version 3.1.0
+# Penalty Kings — Version 3.2.0
 
 A polished, offline-first football penalty shootout game built with Flutter.
 
@@ -13,6 +13,9 @@ A polished, offline-first football penalty shootout game built with Flutter.
 - Match-by-match scoring history distinguishes goals, saves and misses.
 - Match-end conversion rate and best streak are calculated for the match, not the lifetime career.
 - Goalkeeper difficulty is saved between sessions.
+- **King’s Cup:** a three-round knockout tournament against CPU opponents, with a trophy-winning final.
+- **Local leaderboard:** your five highest quick-shootout and tournament scores are saved on the device.
+- **Keeper kits:** choose from four goalkeeper kit colours; your choice persists between sessions.
 
 ## Career system
 - Persistent career record: matches, shots, goals and goalkeeper saves.
@@ -38,5 +41,5 @@ flutter build apk --release
 ## Notes
 - The game works offline after installation.
 - Career statistics are local to the device; there is no online leaderboard or cloud account in this version.
-- The sound-effects preference is retained for a future audio pack; actual sound effects are not included yet.
+- The sound-effects preference remains available in settings, but a custom sound-effects pack has not been added yet.
 - The project uses GitHub Actions to generate the Android platform folder when it is not present.
