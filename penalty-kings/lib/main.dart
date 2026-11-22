@@ -1171,6 +1171,18 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
           Text(title, textAlign: TextAlign.center, style: const TextStyle(fontSize: 25, fontWeight: FontWeight.w900, letterSpacing: .6)),
           const SizedBox(height: 9),
           Text(_modeTitle, style: const TextStyle(color: muted, fontSize: 10, letterSpacing: 1.6)),
+          if (_mode != GameMode.tournament) ...[
+            const SizedBox(height: 13),
+            Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              _teamBadge(_selectedTeam, size: 34),
+              const SizedBox(width: 9),
+              Flexible(child: Text(_selectedTeam.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w900))),
+              const Padding(padding: EdgeInsets.symmetric(horizontal: 10), child: Text('VS', style: TextStyle(color: gold, fontSize: 9, fontWeight: FontWeight.w900))),
+              Flexible(child: Text(_selectedOpponent.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w900))),
+              const SizedBox(width: 9),
+              _teamBadge(_selectedOpponent, size: 34),
+            ]),
+          ],
           if (_mode == GameMode.tournament) ...[
             const SizedBox(height: 12),
             Text('$_score  —  $_opponentScore', style: const TextStyle(fontSize: 25, fontWeight: FontWeight.w900, color: gold)),
