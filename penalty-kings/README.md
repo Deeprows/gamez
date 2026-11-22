@@ -1,4 +1,4 @@
-# Penalty Kings — Version 3.3.0
+# Penalty Kings — Version 3.4.0
 
 A polished, offline-first football penalty shootout game built with Flutter.
 
@@ -45,3 +45,10 @@ flutter build apk --release
 - Career statistics are local to the device; there is no online leaderboard or cloud account in this version.
 - The sound-effects preference remains available in settings, but a custom sound-effects pack has not been added yet.
 - The project uses GitHub Actions to generate the Android platform folder when it is not present.
+
+
+## Version 3.4.0 — PES-style controls
+- Added an on-screen left analogue joystick for aiming across the goal.
+- Added a dedicated circular SHOOT action button on the right.
+- Kept the shot-power slider and existing pitch drag aiming as a fallback.
+- Updated the in-game tutorial to explain joystick aiming.
