@@ -298,7 +298,7 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
                 if (mode != null) _start(mode);
               },
               style:FilledButton.styleFrom(backgroundColor:lime,foregroundColor:ink,disabledBackgroundColor:panel2,shape:RoundedRectangleBorder(borderRadius:BorderRadius.circular(15))),
-              child:const Text('CONFIRM TEAMS & PLAY',style:TextStyle(fontWeight:FontWeight.w900,letterSpacing:1)),
+              child:Text(mode == null ? 'SAVE TEAM SELECTION' : 'CONFIRM TEAMS & PLAY',style:const TextStyle(fontWeight:FontWeight.w900,letterSpacing:1)),
             )),
           ]),
         ));
@@ -968,13 +968,19 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
           ]),
         ),
         Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
-            child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-              Text(_selectedTeam.shortName+'  '+_score.toString(), style: const TextStyle(color: lime, fontSize: 10, fontWeight: FontWeight.w900)),
-              Text('VS  '+_opponentName, style: const TextStyle(color: muted, fontSize: 9, fontWeight: FontWeight.w900)),
-              Text(_opponentScore.toString()+'  '+_selectedOpponent.shortName, style: const TextStyle(color: gold, fontSize: 10, fontWeight: FontWeight.w900)),
-            ]),
-          ),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
+          child: _mode == GameMode.tournament
+              ? Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                  Text(_selectedTeam.shortName+'  '+_score.toString(), style: const TextStyle(color: lime, fontSize: 10, fontWeight: FontWeight.w900)),
+                  Text('VS  '+_opponentName, style: const TextStyle(color: muted, fontSize: 9, fontWeight: FontWeight.w900)),
+                  Text(_opponentScore.toString()+'  '+_selectedOpponent.shortName, style: const TextStyle(color: gold, fontSize: 10, fontWeight: FontWeight.w900)),
+                ])
+              : Row(children: [
+                  Expanded(child: Text(_selectedTeam.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: lime, fontSize: 9, fontWeight: FontWeight.w900))),
+                  const Padding(padding: EdgeInsets.symmetric(horizontal: 10), child: Text('VS', style: TextStyle(color: muted, fontSize: 9, fontWeight: FontWeight.w900))),
+                  Expanded(child: Text(_selectedOpponent.name, textAlign: TextAlign.end, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: gold, fontSize: 9, fontWeight: FontWeight.w900))),
+                ]),
+        ),
         _matchProgress(),
         Expanded(
           child: Padding(
