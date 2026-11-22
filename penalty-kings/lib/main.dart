@@ -109,7 +109,7 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
 
   int get _maxShots => (_mode == GameMode.quick || _mode == GameMode.tournament) ? 5 : 999;
   bool get _finished => (_mode == GameMode.quick || _mode == GameMode.tournament) && _attempts >= _maxShots;
-  Color get _keeperKitColor => keeperKits[_keeperKitIndex.clamp(0, keeperKits.length - 1)];
+  Color get _keeperKitColor => keeperKits[_keeperKitIndex.clamp(0, keeperKits.length - 1).toInt()];
   String get _tournamentOpponent => const ['NORTH CITY', 'ROYAL ATHLETIC', 'TITAN FC'][_tournamentRound - 1];
   String get _modeTitle => switch (_mode) {
         GameMode.quick => 'QUICK SHOOTOUT',
@@ -146,7 +146,7 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
       _sound = prefs.getBool('sound') ?? true;
       _vibration = prefs.getBool('vibration') ?? true;
       _tutorialSeen = prefs.getBool('tutorial_seen') ?? false;
-      _keeperKitIndex = (prefs.getInt('keeper_kit') ?? 0).clamp(0, keeperKits.length - 1);
+      _keeperKitIndex = (prefs.getInt('keeper_kit') ?? 0).clamp(0, keeperKits.length - 1).toInt();
       _leaderboard
         ..clear()
         ..addAll(prefs.getStringList('local_leaderboard') ?? <String>[]);
@@ -835,7 +835,7 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
         ]),
       );
     }
-    final total = _mode == GameMode.quick ? 5 : 10;
+    final total = (_mode == GameMode.quick || _mode == GameMode.tournament) ? 5 : 10;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: Row(children: List.generate(total, (i) {
@@ -1102,7 +1102,7 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
           ),
         ]),
         const Spacer(),
-        const Center(child: Text('PENALTY KINGS  •  VERSION 3.1.0', style: TextStyle(color: muted, fontSize: 9, letterSpacing: 1.2))),
+        const Center(child: Text('PENALTY KINGS  •  VERSION 3.2.0', style: TextStyle(color: muted, fontSize: 9, letterSpacing: 1.2))),
       ]),
     );
   }
