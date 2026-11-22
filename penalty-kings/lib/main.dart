@@ -361,7 +361,7 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
       _wide = false;
       _isResolving = false;
       _power = .72;
-      _aim = const Offset(0, -.68);
+      _aim = const Offset(0, -.35);
       _commentary = 'PICK YOUR CORNER';
       _screen = Screen.match;
     });
@@ -416,7 +416,7 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
     setState(() => _aim = Offset(x.toDouble(), y.toDouble()));
   }
 
-  void _moveAimJoystick(Offset local, Size size) {
+  void _moveAimJoystick(Offset local) {
     if (_shotTaken || _isResolving) return;
     const center = 44.0;
     const radius = 31.0;
@@ -428,7 +428,7 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
       _joystick = delta / radius;
       _aim = Offset(
         _joystick.dx.clamp(-.92, .92).toDouble(),
-        (-.68 + _joystick.dy * .65).clamp(-.92, .28).toDouble(),
+        (-.35 + _joystick.dy * .55).clamp(-.92, .28).toDouble(),
       );
     });
   }
@@ -1107,7 +1107,7 @@ class _KingsShellState extends State<KingsShell> with TickerProviderStateMixin {
   Widget _virtualAimPad() {
     return Column(mainAxisSize: MainAxisSize.min, children: [
       GestureDetector(
-        onPanDown: (d) => _moveAimJoystick(d.localPosition, const Size(88, 88)),
+        onPanDown: (d) => _moveAimJoystick(d.localPosition),
         onPanUpdate: (d) => _moveAimJoystick(d.localPosition, const Size(88, 88)),
         onPanEnd: (_) => _releaseAimJoystick(),
         onPanCancel: _releaseAimJoystick,
